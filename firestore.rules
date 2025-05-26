@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    
+    function validateAddress(address) {
+      return address.matches('^0x[a-fA-F0-9]{64}$');
+    }
+    
+    function validateAmount(amount) {
+      return amount is number && amount > 0;
+    }
+    
+    function validateTimestamp(timestamp) {
+      return timestamp is timestamp && timestamp <= request.time;
+    }
+    
+    // User profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId);
+      
+      match /walletInfo/{document=**} {
+        allow read: if isOwner(userId);
+        allow write: if isOwner(userId);
+        
+        allow create, update: if isOwner(userId)
+          && validateAddress(request.resource.data.address)
+          && request.resource.data.publicKey is string
+          && (!('privateKeyEncrypted' in request.resource.data) 
+              || request.resource.data.privateKeyEncrypted is string);
+      }
+    }
+    
+    // Encrypted tokens
+    match /encrypted_tokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && validateAddress(request.resource.data.sender)
+        && request.resource.data.tokenType is string
+        && validateAmount(request.resource.data.amount)
+        && request.resource.data.encryptedData is string
+        && validateTimestamp(request.resource.data.timestamp)
+        && request.resource.data.status in ['encrypted', 'pending', 'decrypted']
+        && request.resource.data.txHash is string;
+      
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'decryptedAt']);
+    }
+    
+    // Sent tokens
+    match /sent_tokens/{tokenId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && validateAddress(request.resource.data.sender)
+        && validateAddress(request.resource.data.recipient)
+        && request.resource.data.tokenType is string
+        && validateAmount(request.resource.data.amount)
+        && request.resource.data.encryptedData is string
+        && validateTimestamp(request.resource.data.timestamp)
+        && request.resource.data.status in ['pending', 'completed', 'failed']
+        && request.resource.data.txHash is string;
+      
+      allow update: if isAuthenticated()
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'unlockTxHash']);
+    }
+    
+    // Transaction history
+    match /transactions/{txId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.type in ['mint', 'transfer', 'lock', 'unlock']
+        && validateAddress(request.resource.data.sender)
+        && validateAddress(request.resource.data.recipient)
+        && request.resource.data.tokenType is string
+        && validateAmount(request.resource.data.amount)
+        && validateTimestamp(request.resource.data.timestamp)
+        && request.resource.data.txHash is string;
+      
+      allow update, delete: if false; // Transactions are immutable
+    }
+  }
+} 

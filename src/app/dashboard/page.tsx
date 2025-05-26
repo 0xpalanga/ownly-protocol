@@ -1,478 +1,376 @@
 "use client";
-import { db } from "../../firebase.js";
-import { collection, query, where, addDoc, serverTimestamp, getDocs, doc, updateDoc, deleteDoc, orderBy, limit } from "firebase/firestore";
-import { getAuth, signInWithCustomToken, onAuthStateChanged, User } from "firebase/auth";
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
-import { ConnectButton } from '@mysten/dapp-kit';
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import CryptoJS from "crypto-js";
-import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { useSignPersonalMessage, useCurrentAccount, useWallets, useConnectWallet, useSuiClient } from "@mysten/dapp-kit";
+import { Card } from "@/components/ui/card";
+import { useCurrentAccount, useWallets, useConnectWallet, useSignAndExecuteTransactionBlock } from "@mysten/dapp-kit";
+import { 
+  SUPPORTED_TOKENS, 
+  TokenInfo, 
+  getTokenBalance, 
+  buildEncryptTokenTransaction, 
+  getTransactionHistory,
+  verifyContractModule,
+  EncryptedTokenData,
+  saveEncryptedToken,
+  getEncryptedTokensByStatus
+} from "@/lib/tokens";
+import { TransactionBlock } from "@mysten/sui.js/transactions";
+import CryptoJS from 'crypto-js';
+import Cookies from 'js-cookie';
+import { auth } from '@/lib/firebase';
 
-
-const Badge = ({ children, variant = "default" }: { children: React.ReactNode; variant?: "default" | "secondary" | "destructive" | "outline" }) => {
-  const baseClasses = "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium";
-  const variantClasses = {
-    default: "bg-blue-100 text-blue-800",
-    secondary: "bg-gray-100 text-gray-800",
-    destructive: "bg-red-100 text-red-800",
-    outline: "border border-gray-300 text-gray-700"
-  };
-  
-  return (
-    <span className={`${baseClasses} ${variantClasses[variant]}`}>
-      {children}
-    </span>
-  );
-};
-
-// Type definitions
-interface EncryptedTokenData {
-  id?: string;
-  tokenType: string;
-  amount: number;
-  sender: string;
-  owner?: string;
-  encryptedData?: string;
-  timestamp: any;
-  status: 'encrypted' | 'sent' | 'received' | 'decrypted';
-}
-
-interface ReceivedToken {
+interface EncryptedTransaction {
   id: string;
-  encryptedData: string;
+  type: 'encrypt' | 'decrypt';
   tokenType: string;
-  amount: number;
+  amount: string;
   sender: string;
   recipient: string;
-  timestamp: any;
-  status: 'pending' | 'decrypted';
-  decryptedAt?: any;
+  encryptedData: string;
+  status: string;
+  timestamp: number;
 }
 
-interface WalletBalance {
-  [tokenType: string]: number;
+interface TransactionDisplayProps {
+  id?: string;
+  txHash?: string;
+  type: string;
+  tokenType: string;
+  amount: string;
+  status: string;
+  timestamp: number;
 }
+
+// Update the formatBalance function to handle decimal inputs
+const formatBalance = (balance: string, decimals: number = 9): string => {
+  try {
+    if (!balance) return '0.0000';
+    
+    // If the balance is already in decimal format (e.g., "0.11")
+    if (balance.includes('.')) {
+      const [integerPart, fractionalPart = ''] = balance.split('.');
+      const paddedFractional = fractionalPart.padEnd(decimals, '0');
+      const fullNumber = integerPart + paddedFractional;
+      const value = BigInt(fullNumber);
+      const divisor = BigInt(10 ** decimals);
+      const formattedInteger = value / divisor;
+      const formattedFractional = (value % divisor).toString().padStart(decimals, '0');
+      const formattedAmount = `${formattedInteger}.${formattedFractional.slice(0, 4)}`;
+      return formattedAmount.replace(/\.?0+$/, '');
+    }
+
+    // If the balance is in smallest unit format (e.g., "110000000")
+    const value = BigInt(balance);
+    const divisor = BigInt(10 ** decimals);
+    const integerPart = value / divisor;
+    const fractionalPart = (value % divisor).toString().padStart(decimals, '0');
+    const formattedAmount = `${integerPart}.${fractionalPart.slice(0, 4)}`;
+    return formattedAmount.replace(/\.?0+$/, '');
+  } catch (error) {
+    console.error('Error formatting balance:', error);
+    return '0.0000';
+  }
+};
+
+// Add a helper function to convert decimal to smallest unit
+const decimalToSmallestUnit = (amount: string, decimals: number): bigint => {
+  try {
+    if (!amount) return BigInt(0);
+    
+    // Handle decimal input
+    if (amount.includes('.')) {
+      const [integerPart, fractionalPart = ''] = amount.split('.');
+      const paddedFractional = fractionalPart.padEnd(decimals, '0').slice(0, decimals);
+      const fullNumber = integerPart + paddedFractional;
+      return BigInt(fullNumber);
+    }
+    
+    // Handle integer input
+    return BigInt(amount) * BigInt(10 ** decimals);
+  } catch (error) {
+    console.error('Error converting to smallest unit:', error);
+    return BigInt(0);
+  }
+};
+
+// Add a helper function to format transaction amounts
+const formatTransactionAmount = (amount: string, token: string): string => {
+  const tokenInfo = SUPPORTED_TOKENS[token as keyof typeof SUPPORTED_TOKENS];
+  if (!tokenInfo) return amount;
+  return formatBalance(amount, tokenInfo.decimals);
+};
+
+// Add this function at the top level, after the formatBalance function
+const generateUniqueId = (() => {
+  let counter = 0;
+  return () => `tx-${counter++}`;
+})();
 
 export default function DashboardPage() {
-  // Hooks
-  const { mutateAsync: signPersonalMessage } = useSignPersonalMessage();
-  const client = useSuiClient();
+  const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>({});
+  const [transactions, setTransactions] = useState<TransactionDisplayProps[]>([]);
+  const [showEncryptDialog, setShowEncryptDialog] = useState(false);
+  const [encryptAmount, setEncryptAmount] = useState("");
+  const [selectedToken, setSelectedToken] = useState<TokenInfo>(SUPPORTED_TOKENS.WAL);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [firebaseUser, setFirebaseUser] = useState(null);
+  const [activeTab, setActiveTab] = useState("account");
+  const [contractVerified, setContractVerified] = useState(false);
+  const [contractError, setContractError] = useState<string | null>(null);
+  const [encryptedTokens, setEncryptedTokens] = useState<EncryptedTokenData[]>([]);
+  const [recentTransactions, setRecentTransactions] = useState<TransactionDisplayProps[]>([]);
+  
   const router = useRouter();
   const account = useCurrentAccount();
-  const { wallets } = useWallets();
-  const { connect } = useConnectWallet();
-  const auth = getAuth();
-  
-  // State
-  const [balance, setBalance] = useState("0");
-  const [walletBalances, setWalletBalances] = useState<WalletBalance>({});
-  const [loading, setLoading] = useState(false);
-  const [activeTab, setActiveTab] = useState("account");
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  
-  // Token states
-  const [myEncryptedTokens, setMyEncryptedTokens] = useState<EncryptedTokenData[]>([]);
-  const [receivedTokens, setReceivedTokens] = useState<ReceivedToken[]>([]);
-  const [sentTokens, setSentTokens] = useState<ReceivedToken[]>([]);
-  
-  // Modal states
-  const [encryptModalOpen, setEncryptModalOpen] = useState(false);
-  const [sendModalOpen, setSendModalOpen] = useState(false);
-  const [decryptModalOpen, setDecryptModalOpen] = useState(false);
-  
-  // Form states
-  const [encryptToken, setEncryptToken] = useState("SUI");
-  const [encryptAmount, setEncryptAmount] = useState("");
-  const [sendRecipient, setSendRecipient] = useState("");
-  const [sendToken, setSendToken] = useState("SUI");
-  const [sendAmount, setSendAmount] = useState("");
-  const [selectedTokenForDecrypt, setSelectedTokenForDecrypt] = useState<ReceivedToken | null>(null);
+  const wallets = useWallets();
+  const { mutateAsync: connectWallet } = useConnectWallet();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransactionBlock();
 
-  const connected = !!account;
-  const currentAddress = account?.address;
-
-  // Utility Functions
-  const showMessage = (message: string, type: 'success' | 'error' = 'success') => {
-    alert(message); // Replace with proper toast notification
-  };
-
-  const validateAddress = (address: string): boolean => {
-    return address.startsWith('0x') && address.length === 66;
-  };
-
-  const validateAmount = (amount: string): boolean => {
-    const num = parseFloat(amount);
-    return !isNaN(num) && num > 0;
-  };
-
-  // Simplified authentication (since you don't have backend yet)
-  const authenticateUser = async () => {
-    if (!currentAddress) {
-      showMessage("Please connect your wallet first", 'error');
-      return false;
-    }
-
-    try {
-      // Create a message to sign for authentication
-      const timestamp = Date.now();
-      const message = `Authenticate wallet ${currentAddress} at ${timestamp}`;
-      const encoded = new TextEncoder().encode(message);
-      
-      // Sign the message
-      const signature = await signPersonalMessage({ message: encoded });
-      
-      //simulate authentication without backend
-      console.log("Wallet signature verified:", signature);
-      
-      // Simulate successful authentication
-      setIsAuthenticated(true);
-      setFirebaseUser({ uid: currentAddress } as User);
-      
-      return true;
-    } catch (error) {
-      console.error("Authentication failed:", error);
-      showMessage("Authentication failed", 'error');
-      return false;
-    }
-  };
-
-  // Monitor Firebase auth state
+  // Check authentication and load data
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setFirebaseUser(user);
-      setIsAuthenticated(!!user);
-    });
-
-    return () => unsubscribe();
-  }, [auth]);
-
-  // Fetch user's encrypted tokens (tokens they created)
-  const fetchMyEncryptedTokens = async () => {
-    if (!currentAddress || !isAuthenticated) return;
+    const isInternalWalletConnected = Cookies.get('internal_wallet_connected') === 'true';
+    const isSuiWalletConnected = Cookies.get('sui_wallet_connected') === 'true';
     
+    if (!isInternalWalletConnected && !isSuiWalletConnected) {
+      router.push('/');
+      return;
+    }
+
+    if (account) {
+      fetchBalances();
+      fetchTransactionHistory();
+      setConnected(true);
+      setIsAuthenticated(true);
+    }
+  }, [account]);
+
+  // Add contract verification
+  useEffect(() => {
+    async function verifyContract() {
+      try {
+        const packageInfo = await verifyContractModule();
+        console.log("Contract verification successful:", packageInfo);
+        setContractVerified(true);
+        setContractError(null);
+      } catch (error) {
+        console.error("Contract verification failed:", error);
+        setContractError(error instanceof Error ? error.message : "Failed to verify contract");
+        setContractVerified(false);
+      }
+    }
+
+    if (account) {
+      verifyContract();
+    }
+  }, [account]);
+
+  // Fetch balances
+  const fetchBalances = async () => {
+    if (!account) return;
+
     try {
-      const q = query(
-        collection(db, "encrypted_tokens"),
-        where("sender", "==", currentAddress),
-        orderBy("timestamp", "desc"),
-        limit(50)
-      );
-      
-      const snapshot = await getDocs(q);
-      const tokens = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as EncryptedTokenData));
-      
-      setMyEncryptedTokens(tokens);
+      const balances: { [key: string]: string } = {};
+      for (const [symbol, token] of Object.entries(SUPPORTED_TOKENS)) {
+        const balance = await getTokenBalance(account.address, token);
+        balances[symbol] = balance;
+      }
+      setTokenBalances(balances);
+      setIsLoading(false);
     } catch (error) {
-      console.error("Error fetching encrypted tokens:", error);
-      showMessage("Failed to fetch encrypted tokens. Please check your authentication.", 'error');
+      console.error("Error fetching balances:", error);
+      setIsLoading(false);
     }
   };
 
-  // Fetch tokens received from others
-  const fetchReceivedTokens = async () => {
-    if (!currentAddress || !isAuthenticated) return;
-    
+  // Add this function to format transaction display
+  const formatTransactionDisplay = (tx: any): TransactionDisplayProps => {
+    return {
+      type: tx.type || 'Unknown',
+      tokenType: tx.tokenType || tx.token || 'Unknown',
+      amount: tx.amount || '0',
+      status: tx.status || 'pending',
+      timestamp: tx.timestamp || Date.now()
+    };
+  };
+
+  // Update fetchTransactionHistory
+  const fetchTransactionHistory = async () => {
+    if (!account) return;
     try {
-      const q = query(
-        collection(db, "sent_tokens"),
-        where("recipient", "==", currentAddress),
-        orderBy("timestamp", "desc"),
-        limit(50)
-      );
-      
-      const snapshot = await getDocs(q);
-      const tokens = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as ReceivedToken));
-      
-      setReceivedTokens(tokens);
+      const [lockedTokens, sentTokens, receivedTokens] = await Promise.all([
+        getEncryptedTokensByStatus('locked', account.address),
+        getEncryptedTokensByStatus('sent', account.address),
+        getEncryptedTokensByStatus('received', account.address)
+      ]);
+
+      // Format and combine transactions
+      const allTransactions = [
+        ...lockedTokens.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Encrypt',
+          tokenType: token.token,
+          amount: formatTransactionAmount(token.amount, token.token),
+          status: token.status,
+          timestamp: token.timestamp
+        })),
+        ...sentTokens.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Send',
+          tokenType: token.token,
+          amount: formatTransactionAmount(token.amount, token.token),
+          status: token.status,
+          timestamp: token.timestamp
+        })),
+        ...receivedTokens.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Receive',
+          tokenType: token.token,
+          amount: formatTransactionAmount(token.amount, token.token),
+          status: token.status,
+          timestamp: token.timestamp
+        }))
+      ].sort((a, b) => b.timestamp - a.timestamp)
+       .slice(0, 5); // Only show last 5 transactions
+
+      setRecentTransactions(allTransactions);
     } catch (error) {
-      console.error("Error fetching received tokens:", error);
-      showMessage("Failed to fetch received tokens. Please check your authentication.", 'error');
+      console.error('Error fetching transaction history:', error);
     }
   };
 
-  // Fetch tokens sent to others
-  const fetchSentTokens = async () => {
-    if (!currentAddress || !isAuthenticated) return;
-    
-    try {
-      const q = query(
-        collection(db, "sent_tokens"),
-        where("sender", "==", currentAddress),
-        orderBy("timestamp", "desc"),
-        limit(50)
-      );
-      
-      const snapshot = await getDocs(q);
-      const tokens = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      } as ReceivedToken));
-      
-      setSentTokens(tokens);
-    } catch (error) {
-      console.error("Error fetching sent tokens:", error);
-      showMessage("Failed to fetch sent tokens. Please check your authentication.", 'error');
-    }
-  };
-
-  // Fetch SUI balance from blockchain
-  const fetchBalance = async (address: string) => {
-    if (!address) return;
-    
-    try {
-      const { totalBalance } = await client.getBalance({ owner: address });
-      const suiAmount = parseFloat(totalBalance) / 1e9;
-      setBalance(suiAmount.toFixed(4));
-    } catch (error) {
-      console.error("Error fetching balance:", error);
-      setBalance("0");
-    }
-  };
-
-  // Calculate wallet balances from decrypted tokens
-  const calculateWalletBalances = () => {
-    const balances: WalletBalance = {};
-    
-    // Add balances from decrypted received tokens
-    receivedTokens
-      .filter(token => token.status === 'decrypted')
-      .forEach(token => {
-        balances[token.tokenType] = (balances[token.tokenType] || 0) + token.amount;
-      });
-    
-    setWalletBalances(balances);
-  };
-
-  // Encrypt token function
+  // Update handleEncrypt function
   const handleEncrypt = async () => {
-    if (!validateAmount(encryptAmount)) {
-      showMessage("Please enter a valid amount", 'error');
+    if (!account || !encryptAmount || isProcessing) return;
+
+    if (!contractVerified) {
+      alert("Smart contract not verified. Please try again later.");
       return;
     }
 
-    if (!currentAddress || !isAuthenticated) {
-      showMessage("Please connect your wallet and authenticate", 'error');
-      return;
-    }
-
-    setLoading(true);
-    
+    setIsProcessing(true);
     try {
-      // Create token data to encrypt
-      const tokenData = {
-        tokenType: encryptToken,
-        amount: parseFloat(encryptAmount),
-        timestamp: Date.now(),
-        owner: currentAddress
-      };
-      
-      // Encrypt the data using the user's address as key
-      const encryptedData = CryptoJS.AES.encrypt(
-        JSON.stringify(tokenData), 
-        currentAddress
-      ).toString();
-      
-      const tokenDoc = {
-        sender: currentAddress,
-        tokenType: encryptToken,
-        amount: parseFloat(encryptAmount),
-        encryptedData: encryptedData,
-        timestamp: serverTimestamp(),
-        status: 'encrypted'
-      };
-
-      await addDoc(collection(db, "encrypted_tokens"), tokenDoc);
-      showMessage("Token encrypted and stored successfully!");
-      
-      setEncryptModalOpen(false);
-      setEncryptAmount("");
-      setEncryptToken("SUI");
-      
-      // Refresh tokens
-      await fetchMyEncryptedTokens();
-    } catch (error) {
-      console.error("Error encrypting token:", error);
-      showMessage("Failed to encrypt token. Please check your authentication.", 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Send encrypted token to another user
-  const handleSend = async () => {
-    if (!validateAddress(sendRecipient)) {
-      showMessage("Please enter a valid recipient address", 'error');
-      return;
-    }
-
-    if (!validateAmount(sendAmount)) {
-      showMessage("Please enter a valid amount", 'error');
-      return;
-    }
-
-    if (!currentAddress || !isAuthenticated) {
-      showMessage("Please connect your wallet and authenticate", 'error');
-      return;
-    }
-
-    if (sendRecipient === currentAddress) {
-      showMessage("Cannot send token to yourself", 'error');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      // Create token data
-      const tokenData = {
-        tokenType: sendToken,
-        amount: parseFloat(sendAmount),
-        sender: currentAddress,
-        timestamp: Date.now()
-      };
-
-      // Encrypt using recipient's address as key (they can decrypt with their address)
-      const encryptedData = CryptoJS.AES.encrypt(
-        JSON.stringify(tokenData), 
-        sendRecipient
-      ).toString();
-
-      // Store in sent_tokens collection
-      const sentTokenDoc = {
-        sender: currentAddress,
-        recipient: sendRecipient,
-        tokenType: sendToken,
-        amount: parseFloat(sendAmount),
-        encryptedData: encryptedData,
-        timestamp: serverTimestamp(),
-        status: 'pending'
-      };
-
-      await addDoc(collection(db, "sent_tokens"), sentTokenDoc);
-      showMessage(`Successfully sent ${sendAmount} ${sendToken} to ${sendRecipient}`);
-
-      setSendModalOpen(false);
-      setSendRecipient("");
-      setSendToken("SUI");
-      setSendAmount("");
-      
-      // Refresh tokens
-      await fetchSentTokens();
-      await fetchReceivedTokens();
-    } catch (error) {
-      console.error("Error sending token:", error);
-      showMessage("Failed to send token. Please check your authentication.", 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Decrypt received token
-  const handleDecrypt = async (token: ReceivedToken) => {
-    if (!currentAddress || !isAuthenticated) {
-      showMessage("Please connect your wallet and authenticate", 'error');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      // Decrypt using current user's address as key
-      const bytes = CryptoJS.AES.decrypt(token.encryptedData, currentAddress);
-      const decryptedData = bytes.toString(CryptoJS.enc.Utf8);
-      
-      if (!decryptedData) {
-        showMessage("Failed to decrypt token - invalid key", 'error');
-        return;
+      // Validate input amount
+      const parsedAmount = parseFloat(encryptAmount);
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        throw new Error("Please enter a valid amount greater than 0");
       }
 
-      const tokenData = JSON.parse(decryptedData);
+      // Convert amount to smallest unit considering token decimals
+      const amountInSmallestUnit = decimalToSmallestUnit(encryptAmount, selectedToken.decimals);
+
+      // Check if user has sufficient balance
+      const currentBalance = tokenBalances[selectedToken.symbol] || "0";
+      if (amountInSmallestUnit > BigInt(currentBalance)) {
+        throw new Error("Insufficient balance");
+      }
+
+      // Create encryption key and encrypt data
+      const encryptionKey = CryptoJS.SHA256(account.address + Date.now()).toString();
+      const timestamp = Date.now();
+      const dataToEncrypt = {
+        amount: amountInSmallestUnit.toString(),
+        token: selectedToken.symbol,
+        timestamp,
+        sender: account.address,
+        key: encryptionKey
+      };
       
-      // Update token status to decrypted
-      const tokenRef = doc(db, "sent_tokens", token.id);
-      await updateDoc(tokenRef, {
-        status: 'decrypted',
-        decryptedAt: serverTimestamp()
+      const encryptedData = CryptoJS.AES.encrypt(JSON.stringify(dataToEncrypt), encryptionKey).toString();
+
+      // Build transaction
+      const tx = buildEncryptTokenTransaction(
+        amountInSmallestUnit.toString(),
+        selectedToken,
+        encryptedData,
+        account.address,
+        account.address  // Use the same address as both sender and recipient
+      );
+
+      // Sign and execute transaction
+      const result = await signAndExecute({
+        transactionBlock: tx,
+        options: {
+          showEffects: true,
+          showEvents: true,
+        },
+      }).catch(error => {
+        console.error('Transaction error:', error);
+        throw new Error(error.message || 'Transaction failed');
       });
 
-      showMessage(`Successfully decrypted ${tokenData.amount} ${tokenData.tokenType}!`);
-      
-      // Refresh tokens and balances
-      await fetchReceivedTokens();
-      calculateWalletBalances();
-      
-      setDecryptModalOpen(false);
-      setSelectedTokenForDecrypt(null);
+      if (result) {
+        const encryptedToken = {
+          txDigest: result.digest,
+          encryptedData,
+          encryptionKey,
+          amount: amountInSmallestUnit.toString(), // Store the raw amount
+          token: selectedToken.symbol,
+          timestamp,
+          sender: account.address,
+          recipient: account.address, // Store the recipient address
+          status: 'locked' as const
+        };
+
+        await saveEncryptedToken(encryptedToken);
+        await fetchBalances();
+        await fetchTransactionHistory();
+        setShowEncryptDialog(false);
+        setEncryptAmount("");
+
+        alert("Tokens locked successfully! The encryption key has been saved.");
+      }
     } catch (error) {
-      console.error("Error decrypting token:", error);
-      showMessage("Failed to decrypt token. Please check your authentication.", 'error');
+      console.error("Encryption error:", error);
+      alert(error instanceof Error ? error.message : "Failed to encrypt tokens. Please try again.");
     } finally {
-      setLoading(false);
+      setIsProcessing(false);
     }
   };
 
-  // Main effect for wallet connection and authentication
-  useEffect(() => {
-    if (connected && currentAddress) {
-      // First authenticate, then fetch data
-      authenticateUser().then((authenticated) => {
-        if (authenticated) {
-          fetchBalance(currentAddress);
-          // Small delay to ensure authentication is set
-          setTimeout(() => {
-            fetchMyEncryptedTokens();
-            fetchReceivedTokens();
-            fetchSentTokens();
-          }, 100);
-        }
-      });
-    } else {
-      setIsAuthenticated(false);
-      setFirebaseUser(null);
-      // Clear data when disconnected
-      setMyEncryptedTokens([]);
-      setReceivedTokens([]);
-      setSentTokens([]);
-      setWalletBalances({});
+  // Handle wallet connection
+  const handleConnect = async () => {
+    if (wallets && wallets.length > 0) {
+      try {
+        await connectWallet({ wallet: wallets[0] });
+        Cookies.set('sui_wallet_connected', 'true', { path: '/' });
+        fetchBalances();
+        fetchTransactionHistory();
+      } catch (error) {
+        console.error("Failed to connect wallet:", error);
+      }
     }
-  }, [connected, currentAddress]);
+  };
 
-  useEffect(() => {
-    calculateWalletBalances();
-  }, [receivedTokens]);
+  // Handle wallet disconnection
+  const handleDisconnect = () => {
+    Cookies.remove('sui_wallet_connected');
+    Cookies.remove('internal_wallet_connected');
+    router.push('/');
+  };
 
-  // Auto-refresh tokens every 30 seconds (only if authenticated)
-  useEffect(() => {
-    if (!currentAddress || !isAuthenticated) return;
-    
-    const interval = setInterval(() => {
-      fetchReceivedTokens();
-      fetchSentTokens();
-      fetchMyEncryptedTokens();
-    }, 30000);
-
-    return () => clearInterval(interval);
-  }, [currentAddress, isAuthenticated]);
+  const authenticateUser = async () => {
+    // Implement the logic to authenticate the user with Firebase
+    setLoading(true);
+    // Replace this with actual Firebase authentication logic
+    setIsAuthenticated(true);
+    setLoading(false);
+  };
 
   if (!connected) {
     return (
       <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="text-center space-y-6">
           <h1 className="text-4xl font-bold">Ownly Protocol</h1>
-          <p className="text-gray-400">Please connect your wallet to continue</p>
-          <ConnectButton />
+          <p className="text-gray-400">Please connect your wallet using the button in the navigation bar</p>
         </div>
       </main>
     );
@@ -492,306 +390,204 @@ export default function DashboardPage() {
     );
   }
 
+  if (contractError) {
+    return (
+      <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
+        <div className="text-center space-y-6">
+          <h1 className="text-4xl font-bold">Contract Error</h1>
+          <p className="text-red-400">{contractError}</p>
+          <Button onClick={() => window.location.reload()}>
+            Retry
+          </Button>
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-gray-950 text-white">
-      <nav className="flex flex-col md:flex-row items-center justify-between px-6 py-4 bg-gray-900 shadow gap-4 md:gap-0">
-        <div className="text-xl font-bold">Ownly Protocol</div>
-        <div className="flex flex-col md:flex-row md:items-center w-full md:w-auto justify-between gap-4">
-          <div className="flex justify-center md:justify-start gap-20">
-            {["account", "received", "sent", "history"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`text-sm font-medium transition-colors ${
-                  activeTab === tab ? "text-white" : "text-gray-400 hover:text-gray-200"
-                }`}
-              >
-                {tab.toUpperCase()}
-              </button>
+      <div className="container mx-auto p-4">
+        <div className="flex justify-between items-center mb-8">
+          <h1 className="text-2xl font-bold">Dashboard</h1>
+          {account ? (
+            <Button
+              variant="outline"
+              onClick={handleDisconnect}
+            >
+            Disconnect Wallet
+          </Button>
+          ) : (
+            <Button
+              onClick={handleConnect}
+            >
+              Connect Wallet
+            </Button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-12 gap-6">
+          {/* Token Balances */}
+          <div className="col-span-12 md:col-span-4 space-y-4">
+            <h2 className="text-xl font-semibold mb-4">Token Balances</h2>
+            {Object.entries(SUPPORTED_TOKENS).map(([symbol, token]) => (
+              <Card key={`token-${symbol}`} className="p-4 border-gray-700 bg-gray-800">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">{token.name}</h3>
+                    <p className="text-sm text-gray-400">{symbol}</p>
+                  </div>
+                  <p className="text-xl text-white">
+                    {formatBalance(tokenBalances[symbol] || "0", token.decimals)}
+                  </p>
+                </div>
+              </Card>
             ))}
           </div>
-          <div className="flex justify-center md:justify-end gap-4">
-            <ConnectButton />
-            <Button
-              variant="destructive"
-              onClick={() => {
-                setIsAuthenticated(false);
-                setFirebaseUser(null);
-                router.push("/");
-              }}
-            >
-              Logout
-            </Button>
-          </div>
-        </div>
-      </nav>
 
-      <div className="container mx-auto px-6 py-8">
-        {activeTab === "account" && (
-          <section className="space-y-10">
-            <div>
-              <h1 className="text-4xl font-bold">Welcome to Your Dashboard</h1>
-              <p className="text-gray-400 mt-2">Manage your encrypted tokens securely</p>
-              {isAuthenticated && (
-                <p className="text-green-400 text-sm mt-1">✓ Wallet authenticated</p>
-              )}
+          {/* Main Content */}
+          <div className="col-span-12 md:col-span-8">
+            {/* Action Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+              <Card className="p-6 border-gray-700 bg-gray-800">
+                <h2 className="text-lg font-semibold mb-4">Encrypt</h2>
+                <p className="text-sm text-gray-400 mb-4">Encrypt your tokens for secure storage</p>
+                <Button
+                  onClick={() => setShowEncryptDialog(true)}
+                  className="w-full bg-blue-600 hover:bg-blue-700"
+                >
+                  Encrypt Tokens
+                </Button>
+              </Card>
+              <Card className="p-6 border-gray-700 bg-gray-800">
+                <h2 className="text-lg font-semibold mb-4">Send</h2>
+                <p className="text-sm text-gray-400 mb-4">Send your encrypted tokens</p>
+                <Button
+                  onClick={() => router.push('/dashboard/send')}
+                  className="w-full bg-green-600 hover:bg-green-700"
+                >
+                  Send Tokens
+                </Button>
+              </Card>
+              <Card className="p-6 border-gray-700 bg-gray-800">
+                <h2 className="text-lg font-semibold mb-4">Decrypt</h2>
+                <p className="text-sm text-gray-400 mb-4">View and decrypt received tokens</p>
+                <Button
+                  onClick={() => router.push('/dashboard/decrypt')}
+                  className="w-full"
+                >
+                  Manage Encrypted
+                </Button>
+              </Card>
             </div>
 
-            <div className="bg-gray-900 p-6 rounded-xl shadow-md space-y-6">
-              <h2 className="text-2xl font-semibold">Account Overview</h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-gray-800 p-4 rounded">
-                  <h3 className="text-sm text-gray-400">SUI Balance</h3>
-                  <p className="text-xl font-semibold">{balance} SUI</p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded">
-                  <h3 className="text-sm text-gray-400">Pending Tokens</h3>
-                  <p className="text-xl font-semibold">{receivedTokens.filter(t => t.status === 'pending').length}</p>
-                </div>
-                <div className="bg-gray-800 p-4 rounded space-y-2">
-                  <h3 className="text-sm text-gray-400">Wallet Address</h3>
-                  <p className="text-sm break-words">{currentAddress}</p>
-                  <Button
-                    size="sm"
-                    className="w-full bg-gray-600 text-white hover:bg-gray-500"
-                    onClick={() => {
-                      navigator.clipboard.writeText(currentAddress || '');
-                      showMessage("Address copied!");
-                    }}
-                  >
-                    Copy
-                  </Button>
-                </div>
-              </div>
-
-              {/* Decrypted Token Balances */}
-              {Object.keys(walletBalances).length > 0 && (
-                <div className="bg-gray-800 p-4 rounded">
-                  <h3 className="text-lg font-semibold mb-3">Decrypted Token Balances</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {Object.entries(walletBalances).map(([token, amount]) => (
-                      <div key={token} className="bg-gray-700 p-3 rounded">
-                        <p className="text-sm text-gray-300">{token}</p>
-                        <p className="text-lg font-semibold">{amount}</p>
+            {/* Recent Activity */}
+            <Card className="col-span-2 p-6 bg-gray-800 border-gray-700">
+              <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
+              <div className="space-y-4">
+                {recentTransactions.length === 0 ? (
+                  <p className="text-gray-400">No recent activity</p>
+                ) : (
+                  <div className="grid gap-4">
+                    {recentTransactions.map((tx) => (
+                      <div
+                        key={tx.id}
+                        className="p-4 rounded-lg border bg-gray-900 border-gray-700"
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <div className="flex items-center gap-2">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                tx.type === 'Encrypt' ? 'bg-blue-900 text-blue-200' :
+                                tx.type === 'Send' ? 'bg-purple-900 text-purple-200' :
+                                'bg-green-900 text-green-200'
+                            }`}>
+                                {tx.type}
+                            </span>
+                              <h3 className="font-medium">{tx.tokenType}</h3>
+                            </div>
+                            <p className="text-sm text-gray-400 mt-1">
+                              Amount: {formatBalance(tx.amount, SUPPORTED_TOKENS[tx.tokenType]?.decimals || 9)}
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              {new Intl.DateTimeFormat('en-US', {
+                                year: 'numeric',
+                                month: 'short',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              }).format(new Date(tx.timestamp))}
+                            </p>
+                          </div>
+                          <div>
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              tx.status === 'locked' ? 'bg-blue-900 text-blue-200' :
+                              tx.status === 'sent' ? 'bg-purple-900 text-purple-200' :
+                              'bg-green-900 text-green-200'
+                            }`}>
+                              {tx.status}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-4 pt-4">
-                {/* Encrypt Modal */}
-                <Dialog open={encryptModalOpen} onOpenChange={setEncryptModalOpen}>
-                  <DialogTrigger asChild>
-                    <Button disabled={loading}>
-                      {loading ? "Processing..." : "Encrypt Token"}
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Encrypt Token</DialogTitle>
-                      <DialogDescription>
-                        Create an encrypted token that only you can decrypt.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="token">Token Type</Label>
-                        <Input
-                          id="token"
-                          value={encryptToken}
-                          onChange={(e) => setEncryptToken(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="amount">Amount</Label>
-                        <Input
-                          id="amount"
-                          type="number"
-                          placeholder="Enter amount"
-                          value={encryptAmount}
-                          onChange={(e) => setEncryptAmount(e.target.value)}
-                        />
-                      </div>
-                      <Button onClick={handleEncrypt} disabled={loading}>
-                        {loading ? "Encrypting..." : "Encrypt Now"}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-
-                {/* Send Modal */}
-                <Dialog open={sendModalOpen} onOpenChange={setSendModalOpen}>
-                  <DialogTrigger asChild>
-                    <Button disabled={loading}>
-                      {loading ? "Processing..." : "Send Token"}
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Send Encrypted Token</DialogTitle>
-                      <DialogDescription>
-                        Send an encrypted token to another wallet address.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="recipient">Recipient Address</Label>
-                        <Input
-                          id="recipient"
-                          placeholder="0x..."
-                          value={sendRecipient}
-                          onChange={(e) => setSendRecipient(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="send-token">Token Type</Label>
-                        <Input
-                          id="send-token"
-                          placeholder="e.g., SUI"
-                          value={sendToken}
-                          onChange={(e) => setSendToken(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="send-amount">Amount</Label>
-                        <Input
-                          id="send-amount"
-                          type="number"
-                          placeholder="Enter amount"
-                          value={sendAmount}
-                          onChange={(e) => setSendAmount(e.target.value)}
-                        />
-                      </div>
-                      <Button onClick={handleSend} disabled={loading}>
-                        {loading ? "Sending..." : "Send Now"}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
+                    )}
               </div>
-            </div>
-
-            {/* My Encrypted Tokens */}
-            <div className="bg-gray-900 p-6 rounded-xl shadow-md space-y-4">
-              <h2 className="text-2xl font-semibold">My Encrypted Tokens</h2>
-              <div className="space-y-2">
-                {myEncryptedTokens.length === 0 ? (
-                  <p className="text-gray-500">No encrypted tokens yet</p>
-                ) : (
-                  myEncryptedTokens.map((token, idx) => (
-                    <div key={idx} className="bg-gray-800 p-4 rounded flex justify-between items-center">
-                      <div>
-                        <p><strong>Type:</strong> {token.tokenType}</p>
-                        <p><strong>Amount:</strong> {token.amount}</p>
-                        <Badge variant="secondary">{token.status}</Badge>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "received" && (
-          <section className="space-y-6">
-            <h2 className="text-2xl font-bold">Received Tokens</h2>
-            <div className="bg-gray-900 p-6 rounded-xl shadow-md">
-              <div className="space-y-4">
-                {receivedTokens.length === 0 ? (
-                  <p className="text-gray-500">No tokens received yet</p>
-                ) : (
-                  receivedTokens.map((token) => (
-                    <div key={token.id} className="bg-gray-800 p-4 rounded flex justify-between items-center">
-                      <div>
-                        <p><strong>From:</strong> {token.sender}</p>
-                        <p><strong>Type:</strong> {token.tokenType}</p>
-                        <p><strong>Amount:</strong> {token.amount}</p>
-                        <Badge variant={token.status === 'pending' ? 'destructive' : 'default'}>
-                          {token.status}
-                        </Badge>
-                      </div>
-                      {token.status === 'pending' && (
-                        <Button
-                          onClick={() => handleDecrypt(token)}
-                          disabled={loading}
-                        >
-                          {loading ? "Decrypting..." : "Decrypt"}
-                        </Button>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "sent" && (
-          <section className="space-y-6">
-            <h2 className="text-2xl font-bold">Sent Tokens</h2>
-            <div className="bg-gray-900 p-6 rounded-xl shadow-md">
-              <div className="space-y-4">
-                {sentTokens.length === 0 ? (
-                  <p className="text-gray-500">No tokens sent yet</p>
-                ) : (
-                  sentTokens.map((token) => (
-                    <div key={token.id} className="bg-gray-800 p-4 rounded">
-                      <p><strong>To:</strong> {token.recipient}</p>
-                      <p><strong>Type:</strong> {token.tokenType}</p>
-                      <p><strong>Amount:</strong> {token.amount}</p>
-                      <Badge variant={token.status === 'pending' ? 'secondary' : 'default'}>
-                        {token.status}
-                      </Badge>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </section>
-        )}
-
-        {activeTab === "history" && (
-          <section className="space-y-6">
-            <h2 className="text-2xl font-bold">Transaction History</h2>
-            <div className="bg-gray-900 p-6 rounded-xl shadow-md space-y-6">
-              <div>
-                <h3 className="text-xl font-semibold mb-3">All Activities</h3>
-                <div className="space-y-2">
-                  {[...myEncryptedTokens, ...receivedTokens, ...sentTokens].length === 0 ? (
-                    <p className="text-gray-500">No activities yet</p>
-                  ) : (
-                    [...myEncryptedTokens, ...receivedTokens, ...sentTokens]
-                      .sort((a, b) => {
-                        const timeA = a.timestamp?.seconds || 0;
-                        const timeB = b.timestamp?.seconds || 0;
-                        return timeB - timeA;
-                      })
-                      .map((item, i) => (
-                        <div key={i} className="p-4 bg-gray-800 rounded">
-                          <div className="flex justify-between items-center">
-                            <div>
-                              <p><strong>{item.tokenType}</strong> - {item.amount}</p>
-                              <p className="text-sm text-gray-400">
-                                {'recipient' in item ? `To: ${item.recipient}` : 
-                                 'sender' in item && item.sender !== currentAddress ? `From: ${item.sender}` : 
-                                 'My encrypted token'}
-                              </p>
-                            </div>
-                            <Badge variant="outline">
-                              {'status' in item ? item.status : 'encrypted'}
-                            </Badge>
-                          </div>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-        )}
+            </Card>
+          </div>
+        </div>
       </div>
+
+      {/* Encrypt Dialog */}
+      <Dialog open={showEncryptDialog} onOpenChange={setShowEncryptDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Encrypt Tokens</DialogTitle>
+            <DialogDescription>
+              Encrypt your tokens for secure storage
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label>Select Token</Label>
+              <select
+                className="w-full p-2 mt-1 bg-gray-800 border border-gray-700 rounded text-white"
+                value={selectedToken.symbol}
+                onChange={(e) => setSelectedToken(SUPPORTED_TOKENS[e.target.value as keyof typeof SUPPORTED_TOKENS])}
+              >
+                {Object.entries(SUPPORTED_TOKENS).map(([symbol, token]) => (
+                  <option key={`select-${symbol}`} value={symbol}>
+                    {token.name} ({symbol}) - Balance: {formatBalance(tokenBalances[symbol] || "0", token.decimals)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label>Amount</Label>
+              <Input
+                type="number"
+                placeholder="0.00"
+                value={encryptAmount}
+                onChange={(e) => setEncryptAmount(e.target.value)}
+                className="bg-gray-800 border-gray-700"
+                step="0.000001"
+                min="0"
+              />
+            </div>
+          </div>
+          <div className="flex justify-end space-x-4">
+            <Button variant="outline" onClick={() => setShowEncryptDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleEncrypt}
+              disabled={isProcessing}
+            >
+              {isProcessing ? "Processing..." : "Encrypt"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

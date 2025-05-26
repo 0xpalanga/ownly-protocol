@@ -1,0 +1,105 @@
+{
+  "rules": {
+    "users": {
+      "$uid": {
+        ".read": "$uid === auth.uid",
+        ".write": "$uid === auth.uid",
+        "walletInfo": {
+          ".read": "$uid === auth.uid",
+          ".write": "$uid === auth.uid",
+          ".validate": "newData.hasChildren(['address', 'publicKey'])",
+          "address": {
+            ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+          },
+          "publicKey": {
+            ".validate": "newData.isString()"
+          },
+          "privateKeyEncrypted": {
+            ".validate": "newData.isString()"
+          }
+        }
+      }
+    },
+    "encrypted_tokens": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$tokenId": {
+        ".validate": "newData.hasChildren(['sender', 'tokenType', 'amount', 'encryptedData', 'timestamp', 'status'])",
+        "sender": {
+          ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+        },
+        "tokenType": {
+          ".validate": "newData.isString()"
+        },
+        "amount": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "encryptedData": {
+          ".validate": "newData.isString()"
+        },
+        "timestamp": {
+          ".validate": "newData.val() <= now"
+        },
+        "status": {
+          ".validate": "newData.isString() && newData.val().matches(/^(encrypted|pending|decrypted)$/)"
+        }
+      }
+    },
+    "sent_tokens": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$tokenId": {
+        ".validate": "newData.hasChildren(['sender', 'recipient', 'tokenType', 'amount', 'encryptedData', 'timestamp', 'status'])",
+        "sender": {
+          ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+        },
+        "recipient": {
+          ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+        },
+        "tokenType": {
+          ".validate": "newData.isString()"
+        },
+        "amount": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "encryptedData": {
+          ".validate": "newData.isString()"
+        },
+        "timestamp": {
+          ".validate": "newData.val() <= now"
+        },
+        "status": {
+          ".validate": "newData.isString() && newData.val().matches(/^(pending|completed|failed)$/)"
+        }
+      }
+    },
+    "transactions": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$txId": {
+        ".validate": "newData.hasChildren(['type', 'sender', 'recipient', 'tokenType', 'amount', 'timestamp', 'txHash'])",
+        "type": {
+          ".validate": "newData.isString() && newData.val().matches(/^(mint|transfer|lock|unlock)$/)"
+        },
+        "sender": {
+          ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+        },
+        "recipient": {
+          ".validate": "newData.isString() && newData.val().matches(/^0x[a-fA-F0-9]{64}$/)"
+        },
+        "tokenType": {
+          ".validate": "newData.isString()"
+        },
+        "amount": {
+          ".validate": "newData.isNumber() && newData.val() > 0"
+        },
+        "timestamp": {
+          ".validate": "newData.val() <= now"
+        },
+        "txHash": {
+          ".validate": "newData.isString() && newData.val().matches(/^[a-fA-F0-9]+$/)"
+        }
+      }
+    }
+  }
+} 

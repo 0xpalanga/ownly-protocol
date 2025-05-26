@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Card } from '@/components/ui/card';
+import Cookies from 'js-cookie';
 
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { fromBase64, toBase64 } from "@mysten/sui/utils";
 import CryptoJS from "crypto-js";
 import { signInAnonymously, signInWithCustomToken } from "firebase/auth";
-import { auth } from "../../firebase";
+import { auth } from "@/lib/firebase";
 import { BIP39_WORDS } from "./bip39_words";
 
 
@@ -124,6 +126,7 @@ export default function InternalWalletPage() {
   const [walletData, setWalletData] = useState<WalletData | null>(null);
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
+  const [address, setAddress] = useState('');
 
   const router = useRouter();
 
@@ -191,41 +194,46 @@ export default function InternalWalletPage() {
   };
 
   const handleConfirmAndSave = async () => {
-  if (!walletData) return;
+    if (!walletData) return;
 
-  setIsCreating(true);
-  setError("");
+    setIsCreating(true);
+    setError("");
 
-  try {
-    // Store encrypted wallet data securely
-    const walletStorage = {
-      address: walletData.address,
-      publicKey: walletData.publicKey,
-      privateKeyEncrypted: walletData.privateKeyEncrypted,
-      createdAt: new Date().toISOString()
-    };
+    try {
+      // Store encrypted wallet data securely
+      const walletStorage = {
+        address: walletData.address,
+        publicKey: walletData.publicKey,
+        privateKeyEncrypted: walletData.privateKeyEncrypted,
+        createdAt: new Date().toISOString()
+      };
 
-    localStorage.setItem("ownly_internal_wallet", JSON.stringify(walletStorage));
-    localStorage.setItem("ownly_wallet_exists", "true");
+      // Save to localStorage
+      localStorage.setItem("ownly_internal_wallet", JSON.stringify(walletStorage));
+      localStorage.setItem("ownly_wallet_exists", "true");
 
-    // Authenticate with Firebase as anon
-    await signInAnonymously(auth);
+      // Set cookies for authentication
+      Cookies.set('internal_wallet_connected', 'true', { path: '/' });
+      Cookies.set('internal_wallet_address', walletData.address, { path: '/' });
 
-    // Clear sensitive data
-    setMnemonic("");
-    setPassword("");
-    setConfirmPassword("");
-    setWalletData(null);
+      // Authenticate with Firebase as anon
+      await signInAnonymously(auth);
 
-    // Redirect to dashboard
-    router.push("/dashboard");
-  } catch (err) {
-    setError("Failed to save wallet or authenticate. Please try again.");
-    console.error("Wallet save/auth error:", err);
-  } finally {
-    setIsCreating(false);
-  }
-};
+      // Clear sensitive data
+      setMnemonic("");
+      setPassword("");
+      setConfirmPassword("");
+      setWalletData(null);
+
+      // Redirect to dashboard since we're now authenticated
+      router.push("/dashboard");
+    } catch (err) {
+      setError("Failed to save wallet or authenticate. Please try again.");
+      console.error("Wallet save/auth error:", err);
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -234,6 +242,17 @@ export default function InternalWalletPage() {
     } catch (err) {
       console.error("Failed to copy:", err);
     }
+  };
+
+  const handleConnect = () => {
+    if (!address) return;
+
+    // Set the internal wallet cookie
+    Cookies.set('internal_wallet_connected', 'true', { path: '/' });
+    Cookies.set('internal_wallet_address', address, { path: '/' });
+
+    // Redirect to dashboard
+    router.push('/dashboard');
   };
 
   return (
@@ -458,7 +477,9 @@ export default function InternalWalletPage() {
             </Button>
             
             {error && (
-              alert(error)
+              <div className="text-red-500 text-sm mt-2">
+                {error}
+              </div>
             )}
           </>
         )}
