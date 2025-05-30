@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from 'react';
 import { useCurrentAccount, useDisconnectWallet } from '@mysten/dapp-kit';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/firebase';
@@ -16,7 +17,7 @@ export default function AccountPage() {
     try {
       disconnect();
       await signOut(auth);
-      router.push('/login');
+      router.push('/');
     } catch (error) {
       console.error('Error logging out:', error);
     }

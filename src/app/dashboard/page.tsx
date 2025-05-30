@@ -23,6 +23,7 @@ import { TransactionBlock } from "@mysten/sui.js/transactions";
 import CryptoJS from 'crypto-js';
 import Cookies from 'js-cookie';
 import { auth } from '@/lib/firebase';
+import { Navbar } from "@/components/Navbar";
 
 interface EncryptedTransaction {
   id: string;
@@ -407,22 +408,15 @@ export default function DashboardPage() {
   return (
     <main className="min-h-screen bg-gray-950 text-white">
       <div className="container mx-auto p-4">
+    
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          {account ? (
-            <Button
-              variant="outline"
-              onClick={handleDisconnect}
-            >
-            Disconnect Wallet
-          </Button>
-          ) : (
-            <Button
-              onClick={handleConnect}
-            >
-              Connect Wallet
-            </Button>
-          )}
+        <button
+            onClick={() => router.push('/dashboard/history')}
+            className="px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
+          >
+            History
+          </button>
         </div>
 
         <div className="grid grid-cols-12 gap-6">
@@ -449,7 +443,7 @@ export default function DashboardPage() {
             {/* Action Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
               <Card className="p-6 border-gray-700 bg-gray-800">
-                <h2 className="text-lg font-semibold mb-4">Encrypt</h2>
+                <h2 className="text-lg font-semibold mb-4">ENCRYPT</h2>
                 <p className="text-sm text-gray-400 mb-4">Encrypt your tokens for secure storage</p>
                 <Button
                   onClick={() => setShowEncryptDialog(true)}
@@ -459,7 +453,7 @@ export default function DashboardPage() {
                 </Button>
               </Card>
               <Card className="p-6 border-gray-700 bg-gray-800">
-                <h2 className="text-lg font-semibold mb-4">Send</h2>
+                <h2 className="text-lg font-semibold mb-4">SEND</h2>
                 <p className="text-sm text-gray-400 mb-4">Send your encrypted tokens</p>
                 <Button
                   onClick={() => router.push('/dashboard/send')}
@@ -469,7 +463,7 @@ export default function DashboardPage() {
                 </Button>
               </Card>
               <Card className="p-6 border-gray-700 bg-gray-800">
-                <h2 className="text-lg font-semibold mb-4">Decrypt</h2>
+                <h2 className="text-lg font-semibold mb-4">DECRYPT</h2>
                 <p className="text-sm text-gray-400 mb-4">View and decrypt received tokens</p>
                 <Button
                   onClick={() => router.push('/dashboard/decrypt')}
@@ -483,11 +477,11 @@ export default function DashboardPage() {
             {/* Recent Activity */}
             <Card className="col-span-2 p-6 bg-gray-800 border-gray-700">
               <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
-              <div className="space-y-4">
+              <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar">
                 {recentTransactions.length === 0 ? (
                   <p className="text-gray-400">No recent activity</p>
                 ) : (
-                  <div className="grid gap-4">
+                  <div className="grid gap-4 pr-2">
                     {recentTransactions.map((tx) => (
                       <div
                         key={tx.id}
@@ -496,13 +490,13 @@ export default function DashboardPage() {
                         <div className="flex justify-between items-center">
                           <div>
                             <div className="flex items-center gap-2">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              <span className={`px-2 py-1 rounded text-xs font-medium ${
                                 tx.type === 'Encrypt' ? 'bg-blue-900 text-blue-200' :
                                 tx.type === 'Send' ? 'bg-purple-900 text-purple-200' :
                                 'bg-green-900 text-green-200'
-                            }`}>
+                              }`}>
                                 {tx.type}
-                            </span>
+                              </span>
                               <h3 className="font-medium">{tx.tokenType}</h3>
                             </div>
                             <p className="text-sm text-gray-400 mt-1">
@@ -531,7 +525,7 @@ export default function DashboardPage() {
                       </div>
                     ))}
                   </div>
-                    )}
+                )}
               </div>
             </Card>
           </div>

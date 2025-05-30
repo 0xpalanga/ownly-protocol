@@ -9,27 +9,12 @@ export function Navbar() {
     <nav className="bg-gray-900 text-white shadow-lg">
       <div className="container mx-auto px-6 py-3">
         <div className="flex items-center justify-between">
-          {/* Logo */}
-          <div className="flex-shrink-0">
+          {/* Logo and Testnet Indicator */}
+          <div className="flex items-center gap-4">
             <Link href="/" className="text-xl font-bold">
               Ownly Protocol
             </Link>
-          </div>
-          
-          {/* Navigation Links - Centered */}
-          <div className="flex items-center justify-center space-x-8 flex-grow">
-            <Link href="/dashboard" className="hover:text-gray-300 font-medium">
-              Dashboard
-            </Link>
-            <Link href="/dashboard/send" className="hover:text-gray-300 font-medium">
-              Send
-            </Link>
-            <Link href="/dashboard/receive" className="hover:text-gray-300 font-medium">
-              Receive
-            </Link>
-            <Link href="/dashboard/history" className="hover:text-gray-300 font-medium">
-              History
-            </Link>
+            <span className="text-sm text-red-500 animate-pulse"><b>TESNET</b></span>
           </div>
           
           {/* Wallet Connection - Right Side */}

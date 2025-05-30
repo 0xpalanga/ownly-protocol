@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useCurrentAccount } from '@mysten/dapp-kit';
 import { getEncryptedTokensByStatus, SUPPORTED_TOKENS } from '@/lib/tokens';
+import { BackButton } from '@/components/BackButton';
 
 interface PlatformTransaction {
   id: string;
@@ -11,7 +12,7 @@ interface PlatformTransaction {
   amount: string;
   status: 'locked' | 'sent' | 'received';
   timestamp: number;
-  sender: string;
+      sender: string;
   recipient?: string;
   type?: 'Encrypt' | 'Send' | 'Receive';
 }
@@ -44,7 +45,7 @@ const formatBalance = (balance: string, decimals: number = 9): string => {
   } catch (error) {
     console.error('Error formatting balance:', error);
     return '0.0000';
-  }
+}
 };
 
 export default function HistoryPage() {
@@ -129,6 +130,7 @@ export default function HistoryPage() {
 
   return (
     <div className="container mx-auto p-4">
+      <BackButton />
       <h1 className="text-2xl font-bold mb-6">Transaction History</h1>
       
       {error && (
@@ -171,8 +173,8 @@ export default function HistoryPage() {
             ) : (
               transactions.map((tx) => (
                 <tr key={tx.id || tx.txDigest}>
-                  <td className="px-6 py-4 whitespace-nowrap text-gray-300">
-                    <span className="font-mono">
+                <td className="px-6 py-4 whitespace-nowrap text-gray-300">
+                  <span className="font-mono">
                       {tx.txDigest.slice(0, 8)}...{tx.txDigest.slice(-6)}
                     </span>
                   </td>
@@ -183,27 +185,27 @@ export default function HistoryPage() {
                       'bg-green-900 text-green-200'
                     }`}>
                       {tx.type}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-gray-300">
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-gray-300">
                     {tx.token}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-gray-300">
                     {formatBalance(tx.amount, SUPPORTED_TOKENS[tx.token]?.decimals || 9)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  <span className={`px-2 py-1 rounded text-xs font-medium ${
                       tx.status === 'locked' ? 'bg-blue-900 text-blue-200' :
                       tx.status === 'sent' ? 'bg-purple-900 text-purple-200' :
                       'bg-green-900 text-green-200'
-                    }`}>
+                  }`}>
                       {tx.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-gray-300">
+                  </span>
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-gray-300">
                     {formatDate(tx.timestamp)}
-                  </td>
-                </tr>
+                </td>
+              </tr>
               ))
             )}
           </tbody>

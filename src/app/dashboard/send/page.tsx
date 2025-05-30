@@ -11,6 +11,7 @@ import { getEncryptedTokensByStatus, SUPPORTED_TOKENS } from '@/lib/tokens';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { saveEncryptedToken } from '@/lib/tokens';
+import { BackButton } from '@/components/BackButton';
 
 // Add formatBalance function
 const formatBalance = (balance: string, decimals: number = 9): string => {
@@ -178,6 +179,7 @@ export default function SendPage() {
 
   return (
     <div className="container mx-auto p-4">
+      <BackButton />
       <h1 className="text-2xl font-bold mb-6">Send Encrypted Tokens</h1>
       
       {error && (

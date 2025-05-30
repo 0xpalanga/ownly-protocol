@@ -13,6 +13,7 @@ import {
 import CryptoJS from 'crypto-js';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
 import { TransactionBlock } from '@mysten/sui.js/transactions';
+import { BackButton } from '@/components/BackButton';
 
 interface EncryptedToken {
   id: string;
@@ -108,7 +109,7 @@ export default function DecryptPage() {
     } catch (error) {
       console.error('Error fetching tokens:', error);
       setError('Failed to fetch tokens. Please try again.');
-      setIsLoading(false);
+    setIsLoading(false);
     }
   };
 
@@ -274,6 +275,7 @@ export default function DecryptPage() {
 
   return (
     <div className="container mx-auto p-4">
+      <BackButton />
       <h1 className="text-2xl font-bold mb-6">Decrypt Received Tokens</h1>
       
       {error && (
@@ -288,40 +290,40 @@ export default function DecryptPage() {
           {receivedTokens.length === 0 ? (
             <p className="text-gray-400">No tokens available to decrypt</p>
           ) : (
-            <div className="grid gap-4">
+      <div className="grid gap-4">
               {receivedTokens.map((token) => (
                 <div
                   key={token.id}
                   className="p-4 rounded-lg border bg-gray-900 border-gray-700"
                 >
                   <div className="flex justify-between items-center">
-                    <div>
+                <div>
                       <h3 className="font-medium">{token.token}</h3>
-                      <p className="text-sm text-gray-400">
+                  <p className="text-sm text-gray-400">
                         Amount: {formatBalance(token.amount, SUPPORTED_TOKENS[token.token]?.decimals || 9)}
-                      </p>
-                      <p className="text-sm text-gray-400">
+                  </p>
+                  <p className="text-sm text-gray-400">
                         From: {token.sender.slice(0, 8)}...{token.sender.slice(-6)}
-                      </p>
-                      <p className="text-sm text-gray-400">
+                  </p>
+                  <p className="text-sm text-gray-400">
                         Received: {new Date(token.timestamp).toLocaleString()}
-                      </p>
-                    </div>
+                  </p>
+                </div>
                     <div>
-                      <Button
-                        onClick={() => handleDecrypt(token)}
+                    <Button
+                      onClick={() => handleDecrypt(token)}
                         variant="outline"
                         disabled={isDecrypting}
-                      >
+                    >
                         {isDecrypting ? 'Decrypting...' : 'Decrypt'}
-                      </Button>
+                    </Button>
                     </div>
                   </div>
                 </div>
               ))}
-            </div>
-          )}
-        </div>
+              </div>
+        )}
+      </div>
       </Card>
     </div>
   );

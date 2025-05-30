@@ -1,9 +1,6 @@
-// File: lib/auth.ts
-// Save this in: src/lib/auth.ts
-
 import { getAuth, signInWithCustomToken, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, User } from "firebase/auth";
 import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
-import { db } from "../firebase"; // Adjust path to your firebase config
+import { db } from "../firebase"; 
 import CryptoJS from "crypto-js";
 
 export interface InternalWalletData {

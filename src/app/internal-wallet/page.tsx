@@ -327,7 +327,7 @@ export default function InternalWalletPage() {
               </Button>
             </div>
             
-            alert(" ⚠️ Never share your recovery phrase. Anyone with access to it can control your wallet.")
+           ⚠️ Never share your recovery phrase. Anyone with access to it can control your wallet.
           </>
         )}
 
@@ -466,7 +466,7 @@ export default function InternalWalletPage() {
               </Button>
             </div>
             
-            alert(" ✅ Your wallet is encrypted and will be stored securely. You'll need your password to access it.");
+            ✅ Your wallet is encrypted and will be stored securely. You'll need your password to access it.
             
             <Button 
               className="w-full h-12" 
