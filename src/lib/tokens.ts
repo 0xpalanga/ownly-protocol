@@ -115,16 +115,19 @@ export function buildUnlockTokenTransaction(
   // Convert token type to a simple string for the contract
   const tokenTypeStr = token.symbol;
 
-  // Call the unlock function with the shared object
-  tx.moveCall({
+  // Call the unlock function with the shared object and get the returned coin
+  const unlockedCoin = tx.moveCall({
     target: `${process.env.NEXT_PUBLIC_PACKAGE_ID}::token_locker::unlock_token`,
     arguments: [
-      tx.object(lockObjectId), // Pass the object by value, not by reference
+      tx.object(lockObjectId),
       tx.pure(recipientAddress),
-      tx.pure(Array.from(new TextEncoder().encode(tokenTypeStr))), // Convert string to UTF-8 bytes
+      tx.pure(Array.from(new TextEncoder().encode(tokenTypeStr))),
     ],
     typeArguments: [token.coinType]
   });
+
+  // Transfer the unlocked coin to the recipient
+  tx.transferObjects([unlockedCoin], tx.pure(recipientAddress));
 
   return tx;
 }

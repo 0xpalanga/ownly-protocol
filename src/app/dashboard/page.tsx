@@ -147,12 +147,31 @@ export default function DashboardPage() {
     }
 
     if (account) {
-      fetchBalances();
-      fetchTransactionHistory();
+      // Refresh data when dashboard is mounted
+      const refreshData = async () => {
+        try {
+          setIsLoading(true);
+          await Promise.all([
+            fetchBalances(),
+            fetchTransactionHistory()
+          ]);
+        } catch (error) {
+          console.error('Error refreshing data:', error);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      
+      refreshData();
       setConnected(true);
       setIsAuthenticated(true);
+
+      // Set up an interval to refresh balances periodically
+      const refreshInterval = setInterval(refreshData, 5000); // Refresh every 5 seconds
+
+      return () => clearInterval(refreshInterval);
     }
-  }, [account]);
+  }, [account]); // Remove router.asPath dependency
 
   // Add contract verification
   useEffect(() => {

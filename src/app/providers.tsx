@@ -31,7 +31,7 @@ export function Providers({ children }: PropsWithChildren) {
     <QueryClientProvider client={queryClient}>
       <SuiClientProvider networks={networks} defaultNetwork="testnet">
         <DynamicWalletProvider 
-          autoConnect={false}
+          autoConnect={true}
           preferredWallets={[
             "Bitget Wallet",
             "Sui Wallet",

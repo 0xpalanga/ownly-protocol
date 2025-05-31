@@ -188,16 +188,9 @@ export default function DecryptPage() {
         throw new Error('Unsupported token type');
       }
 
-      // Regenerate the recipient address using the same method as during encryption
-      const recipientSeed = `${token.sender}-${decryptedData.timestamp}-${token.encryptedData.slice(0, 32)}`;
-      const recipientHash = CryptoJS.SHA256(recipientSeed).toString();
-      const recipientAddress = `0x${recipientHash.slice(0, 64)}`;
-
-      console.log('Generated recipient address:', recipientAddress);
-
-      // Build unlock transaction
+      // Build unlock transaction using the actual wallet address
       const tx = buildUnlockTokenTransaction(
-        recipientAddress, // Use the generated recipient address
+        account.address, // Use actual wallet address
         lockObjectId,
         tokenInfo
       );
@@ -219,13 +212,24 @@ export default function DecryptPage() {
       console.log('Transaction result:', result);
 
       if (result) {
-        // Update the token status in Firebase
-        await updateTokenStatus(token.id, 'received', account.address);
-        
-        // Remove the decrypted token from the list
-        setReceivedTokens(prev => prev.filter(t => t.id !== token.id));
-        
-        alert('Token successfully decrypted and unlocked!');
+        try {
+          // Update the token status in Firebase
+          await updateTokenStatus(token.id, 'received', account.address);
+          
+          // Remove the decrypted token from the list
+          setReceivedTokens(prev => prev.filter(t => t.id !== token.id));
+          
+          // Wait a moment for the blockchain to process the transaction
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          alert('Token successfully decrypted and unlocked!');
+          
+          // Use replace instead of push to force a fresh load of the dashboard
+          router.replace('/dashboard');
+        } catch (error) {
+          console.error('Error updating token status:', error);
+          throw error;
+        }
       }
     } catch (error) {
       console.error('Decryption failed:', error);
