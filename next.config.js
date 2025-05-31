@@ -1,9 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ['@mysten/dapp-kit', '@mysten/sui.js', 'lru-cache'],
-  experimental: {
-    esmExternals: false
-  },
   webpack: (config, { isServer }) => {
     config.resolve.alias = {
       ...config.resolve.alias,
@@ -41,8 +38,9 @@ const nextConfig = {
                 https://firestore.googleapis.com
                 https://*.googleapis.com
                 https://*.gstatic.com;
-              style-src 'self' 'unsafe-inline';
-              img-src 'self' data:;
+              style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://*.gstatic.com;
+              font-src 'self' data: https://fonts.gstatic.com;
+              img-src 'self' data: https://*.gstatic.com;
             `.replace(/\s{2,}/g, " ").trim(),
           },
         ],
