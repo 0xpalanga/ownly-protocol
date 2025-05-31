@@ -20,12 +20,13 @@ interface EncryptedToken {
   txDigest: string;
   token: string;
   amount: string;
-  status: string;
+  status: 'locked' | 'sent' | 'received' | 'decrypted';
   timestamp: number;
   encryptedData: string;
   encryptionKey: string;
   sender: string;
   recipient?: string;
+  isDecrypting?: boolean;
 }
 
 // Add formatBalance helper
@@ -64,10 +65,35 @@ export default function DecryptPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDecrypting, setIsDecrypting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [decryptedTokenIds, setDecryptedTokenIds] = useState<Set<string>>(new Set());
   
   const router = useRouter();
   const account = useCurrentAccount();
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransactionBlock();
+
+  // Load decrypted token IDs from localStorage on mount
+  useEffect(() => {
+    if (account) {
+      const storedIds = localStorage.getItem(`decrypted_tokens_${account.address}`);
+      if (storedIds) {
+        setDecryptedTokenIds(new Set(JSON.parse(storedIds)));
+      }
+    }
+  }, [account]);
+
+  // Save decrypted token IDs to localStorage when they change
+  useEffect(() => {
+    if (account && decryptedTokenIds.size > 0) {
+      localStorage.setItem(
+        `decrypted_tokens_${account.address}`,
+        JSON.stringify(Array.from(decryptedTokenIds))
+      );
+    }
+  }, [decryptedTokenIds, account]);
+
+  const isTokenDecrypted = (tokenId: string): boolean => {
+    return decryptedTokenIds.has(tokenId);
+  };
 
   useEffect(() => {
     if (!account) {
@@ -89,19 +115,21 @@ export default function DecryptPage() {
       const tokens = await getEncryptedTokensByStatus('locked', account.address);
       console.log('Fetched locked tokens:', tokens);
       
-      // Format tokens for display
-      const formattedTokens = tokens.map(token => ({
-        id: token.id || token.txDigest,
-        txDigest: token.txDigest,
-        token: token.token,
-        amount: token.amount,
-        status: token.status,
-        timestamp: token.timestamp,
-        encryptedData: token.encryptedData,
-        encryptionKey: token.encryptionKey,
-        sender: token.sender,
-        recipient: token.recipient
-      }));
+      // Format tokens for display and filter out already decrypted ones
+      const formattedTokens = tokens
+        .filter(token => !isTokenDecrypted(token.id || token.txDigest))
+        .map(token => ({
+          id: token.id || token.txDigest,
+          txDigest: token.txDigest,
+          token: token.token,
+          amount: token.amount,
+          status: isTokenDecrypted(token.id || token.txDigest) ? 'decrypted' : token.status,
+          timestamp: token.timestamp,
+          encryptedData: token.encryptedData,
+          encryptionKey: token.encryptionKey,
+          sender: token.sender,
+          recipient: token.recipient
+        }));
 
       console.log('Formatted tokens:', formattedTokens);
       setReceivedTokens(formattedTokens);
@@ -109,12 +137,15 @@ export default function DecryptPage() {
     } catch (error) {
       console.error('Error fetching tokens:', error);
       setError('Failed to fetch tokens. Please try again.');
-    setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
   const handleDecrypt = async (token: EncryptedToken) => {
-    if (!account || isDecrypting) return;
+    if (!account || isDecrypting || isTokenDecrypted(token.id)) {
+      console.log('Token already decrypted or decryption in progress');
+      return;
+    }
 
     setIsDecrypting(true);
     setError(null);
@@ -214,7 +245,10 @@ export default function DecryptPage() {
       if (result) {
         try {
           // Update the token status in Firebase
-          await updateTokenStatus(token.id, 'received', account.address);
+          await updateTokenStatus(token.id, 'decrypted', account.address);
+          
+          // Add to decrypted tokens set
+          setDecryptedTokenIds(prev => new Set([...prev, token.id]));
           
           // Remove the decrypted token from the list
           setReceivedTokens(prev => prev.filter(t => t.id !== token.id));
@@ -294,40 +328,47 @@ export default function DecryptPage() {
           {receivedTokens.length === 0 ? (
             <p className="text-gray-400">No tokens available to decrypt</p>
           ) : (
-      <div className="grid gap-4">
+            <div className="grid gap-4">
               {receivedTokens.map((token) => (
                 <div
                   key={token.id}
                   className="p-4 rounded-lg border bg-gray-900 border-gray-700"
                 >
                   <div className="flex justify-between items-center">
-                <div>
-                      <h3 className="font-medium">{token.token}</h3>
-                  <p className="text-sm text-gray-400">
-                        Amount: {formatBalance(token.amount, SUPPORTED_TOKENS[token.token]?.decimals || 9)}
-                  </p>
-                  <p className="text-sm text-gray-400">
-                        From: {token.sender.slice(0, 8)}...{token.sender.slice(-6)}
-                  </p>
-                  <p className="text-sm text-gray-400">
-                        Received: {new Date(token.timestamp).toLocaleString()}
-                  </p>
-                </div>
                     <div>
-                    <Button
-                      onClick={() => handleDecrypt(token)}
-                        variant="outline"
-                        disabled={isDecrypting}
-                    >
-                        {isDecrypting ? 'Decrypting...' : 'Decrypt'}
-                    </Button>
+                      <h3 className="font-medium">{token.token}</h3>
+                      <p className="text-sm text-gray-400">
+                        Amount: {formatBalance(token.amount, SUPPORTED_TOKENS[token.token]?.decimals || 9)}
+                      </p>
+                      <p className="text-sm text-gray-400">
+                        From: {token.sender.slice(0, 8)}...{token.sender.slice(-6)}
+                      </p>
+                      <p className="text-sm text-gray-400">
+                        Received: {new Date(token.timestamp).toLocaleString()}
+                      </p>
+                      <p className="text-sm text-gray-400">
+                        Status: <span className={`font-medium ${
+                          isTokenDecrypted(token.id) ? 'text-green-400' : 'text-yellow-400'
+                        }`}>{isTokenDecrypted(token.id) ? 'decrypted' : 'locked'}</span>
+                      </p>
+                    </div>
+                    <div>
+                      <Button
+                        onClick={() => handleDecrypt(token)}
+                        variant={isTokenDecrypted(token.id) ? "secondary" : "outline"}
+                        disabled={isDecrypting || isTokenDecrypted(token.id)}
+                        className={isTokenDecrypted(token.id) ? "opacity-50 cursor-not-allowed" : ""}
+                      >
+                        {isDecrypting && !isTokenDecrypted(token.id) ? 'Decrypting...' : 
+                         isTokenDecrypted(token.id) ? 'Decrypted' : 'Decrypt'}
+                      </Button>
                     </div>
                   </div>
                 </div>
               ))}
-              </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
       </Card>
     </div>
   );
