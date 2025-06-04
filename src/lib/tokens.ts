@@ -260,4 +260,4 @@ export async function verifyContractModule() {
 export function isValidSuiAddress(address: string): boolean {
   // Sui addresses are 32 bytes (64 characters) prefixed with "0x"
   return /^0x[a-fA-F0-9]{64}$/.test(address);
-}
+} 

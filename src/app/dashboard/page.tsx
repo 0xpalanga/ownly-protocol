@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useCurrentAccount, useWallets, useConnectWallet, useSignAndExecuteTransactionBlock } from "@mysten/dapp-kit";
+import { useCurrentAccount, useWallets, useConnectWallet, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
 import { 
   SUPPORTED_TOKENS, 
   TokenInfo, 
@@ -20,10 +20,12 @@ import {
   getEncryptedTokensByStatus
 } from "@/lib/tokens";
 import { TransactionBlock } from "@mysten/sui.js/transactions";
+import { SuiClient, getFullnodeUrl } from "@mysten/sui.js/client";
 import CryptoJS from 'crypto-js';
 import Cookies from 'js-cookie';
 import { auth } from '@/lib/firebase';
 import { Navbar } from "@/components/Navbar";
+import { formatBalance, decimalToSmallestUnit, formatTransactionAmount, generateUniqueId } from "@/lib/utils/format";
 
 interface EncryptedTransaction {
   id: string;
@@ -38,79 +40,42 @@ interface EncryptedTransaction {
 }
 
 interface TransactionDisplayProps {
-  id?: string;
-  txHash?: string;
-  type: string;
+  id: string;
+  type: 'Encrypt' | 'Send' | 'Receive' | 'Decrypt';
   tokenType: string;
   amount: string;
-  status: string;
+  status: 'locked' | 'sent' | 'received' | 'decrypted';
   timestamp: number;
+  sender: string;
+  recipient?: string;
 }
 
-// Update the formatBalance function to handle decimal inputs
-const formatBalance = (balance: string, decimals: number = 9): string => {
-  try {
-    if (!balance) return '0.0000';
-    
-    // If the balance is already in decimal format (e.g., "0.11")
-    if (balance.includes('.')) {
-      const [integerPart, fractionalPart = ''] = balance.split('.');
-      const paddedFractional = fractionalPart.padEnd(decimals, '0');
-      const fullNumber = integerPart + paddedFractional;
-      const value = BigInt(fullNumber);
-      const divisor = BigInt(10 ** decimals);
-      const formattedInteger = value / divisor;
-      const formattedFractional = (value % divisor).toString().padStart(decimals, '0');
-      const formattedAmount = `${formattedInteger}.${formattedFractional.slice(0, 4)}`;
-      return formattedAmount.replace(/\.?0+$/, '');
-    }
+// Add this helper function at the top level
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-    // If the balance is in smallest unit format (e.g., "110000000")
-    const value = BigInt(balance);
-    const divisor = BigInt(10 ** decimals);
-    const integerPart = value / divisor;
-    const fractionalPart = (value % divisor).toString().padStart(decimals, '0');
-    const formattedAmount = `${integerPart}.${fractionalPart.slice(0, 4)}`;
-    return formattedAmount.replace(/\.?0+$/, '');
-  } catch (error) {
-    console.error('Error formatting balance:', error);
-    return '0.0000';
+const getTransactionWithRetry = async (client: SuiClient, digest: string, maxRetries = 5) => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      // Wait for a bit before trying (increase wait time with each retry)
+      await sleep(1000 * (i + 1));
+      
+      const txResponse = await client.getTransactionBlock({
+        digest,
+        options: {
+          showEffects: true,
+          showEvents: true,
+          showInput: true,
+          showObjectChanges: true,
+        },
+      });
+      
+      return txResponse;
+    } catch (error) {
+      console.log(`Attempt ${i + 1} failed, retrying...`);
+      if (i === maxRetries - 1) throw error;
+    }
   }
 };
-
-// Add a helper function to convert decimal to smallest unit
-const decimalToSmallestUnit = (amount: string, decimals: number): bigint => {
-  try {
-    if (!amount) return BigInt(0);
-    
-    // Handle decimal input
-    if (amount.includes('.')) {
-      const [integerPart, fractionalPart = ''] = amount.split('.');
-      const paddedFractional = fractionalPart.padEnd(decimals, '0').slice(0, decimals);
-      const fullNumber = integerPart + paddedFractional;
-      return BigInt(fullNumber);
-    }
-    
-    // Handle integer input
-    return BigInt(amount) * BigInt(10 ** decimals);
-  } catch (error) {
-    console.error('Error converting to smallest unit:', error);
-    return BigInt(0);
-  }
-};
-
-// Add a helper function to format transaction amounts
-const formatTransactionAmount = (amount: string, token: string): string => {
-  const tokenInfo = SUPPORTED_TOKENS[token as keyof typeof SUPPORTED_TOKENS];
-  if (!tokenInfo) return amount;
-  return formatBalance(amount, tokenInfo.decimals);
-};
-
-// Add this function at the top level, after the formatBalance function
-const generateUniqueId = (() => {
-  let counter = 0;
-  return () => `tx-${counter++}`;
-})();
 
 export default function DashboardPage() {
   const [tokenBalances, setTokenBalances] = useState<{ [key: string]: string }>({});
@@ -134,7 +99,7 @@ export default function DashboardPage() {
   const account = useCurrentAccount();
   const wallets = useWallets();
   const { mutateAsync: connectWallet } = useConnectWallet();
-  const { mutateAsync: signAndExecute } = useSignAndExecuteTransactionBlock();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
 
   // Check authentication and load data
   useEffect(() => {
@@ -211,14 +176,17 @@ export default function DashboardPage() {
     }
   };
 
-  // Add this function to format transaction display
+  // Update the formatTransactionDisplay function
   const formatTransactionDisplay = (tx: any): TransactionDisplayProps => {
     return {
-      type: tx.type || 'Unknown',
+      id: `${tx.id || tx.txDigest || Date.now()}-${tx.type || 'unknown'}-${tx.timestamp || Date.now()}`,
+      type: (tx.type as 'Encrypt' | 'Send' | 'Receive' | 'Decrypt') || 'Encrypt',
       tokenType: tx.tokenType || tx.token || 'Unknown',
       amount: tx.amount || '0',
-      status: tx.status || 'pending',
-      timestamp: tx.timestamp || Date.now()
+      status: (tx.status as 'locked' | 'sent' | 'received' | 'decrypted') || 'locked',
+      timestamp: tx.timestamp || Date.now(),
+      sender: tx.sender || '',
+      recipient: tx.recipient
     };
   };
 
@@ -226,42 +194,71 @@ export default function DashboardPage() {
   const fetchTransactionHistory = async () => {
     if (!account) return;
     try {
-      const [lockedTokens, sentTokens, receivedTokens] = await Promise.all([
+      const [locked, sent, received, decrypted] = await Promise.all([
         getEncryptedTokensByStatus('locked', account.address),
         getEncryptedTokensByStatus('sent', account.address),
-        getEncryptedTokensByStatus('received', account.address)
+        getEncryptedTokensByStatus('received', account.address),
+        getEncryptedTokensByStatus('decrypted', account.address)
       ]);
 
-      // Format and combine transactions
-      const allTransactions = [
-        ...lockedTokens.map(token => ({
-          id: token.id || token.txDigest,
-          type: 'Encrypt',
+      // Update the transaction processing
+      const allTransactions: TransactionDisplayProps[] = [
+        ...locked.map(token => ({
+          id: `${token.id || token.txDigest}-locked-${token.timestamp}`,
+          type: 'Encrypt' as const,
           tokenType: token.token,
           amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status,
-          timestamp: token.timestamp
+          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
         })),
-        ...sentTokens.map(token => ({
-          id: token.id || token.txDigest,
-          type: 'Send',
+        ...sent.map(token => ({
+          id: `${token.id || token.txDigest}-sent-${token.timestamp}`,
+          type: 'Send' as const,
           tokenType: token.token,
           amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status,
-          timestamp: token.timestamp
+          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
         })),
-        ...receivedTokens.map(token => ({
-          id: token.id || token.txDigest,
-          type: 'Receive',
+        ...received.map(token => ({
+          id: `${token.id || token.txDigest}-received-${token.timestamp}`,
+          type: 'Receive' as const,
           tokenType: token.token,
           amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status,
-          timestamp: token.timestamp
+          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
+        })),
+        ...decrypted.map(token => ({
+          id: `${token.id || token.txDigest}-decrypted-${token.timestamp}`,
+          type: 'Decrypt' as const,
+          tokenType: token.token,
+          amount: formatTransactionAmount(token.amount, token.token),
+          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
         }))
-      ].sort((a, b) => b.timestamp - a.timestamp)
-       .slice(0, 5); // Only show last 5 transactions
+      ]
 
-      setRecentTransactions(allTransactions);
+      // Create a Map to store unique transactions
+      const uniqueTransactions = new Map<string, TransactionDisplayProps>();
+
+      // Add all transactions to the Map, automatically removing duplicates
+      allTransactions.forEach(transaction => {
+        uniqueTransactions.set(transaction.id, transaction);
+      });
+
+      // Convert back to array, sort, and limit
+      const finalTransactions = Array.from(uniqueTransactions.values())
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10);
+
+      setRecentTransactions(finalTransactions);
     } catch (error) {
       console.error('Error fetching transaction history:', error);
     }
@@ -315,39 +312,78 @@ export default function DashboardPage() {
         account.address  // Use the same address as both sender and recipient
       );
 
+      // Set the sender address
+      tx.setSender(account.address);
+
+      // Properly serialize and encode the transaction
+      const bytes = await tx.build({ 
+        client: new SuiClient({ url: getFullnodeUrl('testnet') })
+      });
+      const serializedTx = btoa(String.fromCharCode(...bytes));
+
       // Sign and execute transaction
-      const result = await signAndExecute({
-        transactionBlock: tx,
-        options: {
-          showEffects: true,
-          showEvents: true,
-        },
-      }).catch(error => {
+      const result = await signAndExecuteTransaction({
+        transaction: serializedTx
+      }).catch((error: Error) => {
         console.error('Transaction error:', error);
         throw new Error(error.message || 'Transaction failed');
       });
 
-      if (result) {
-        const encryptedToken = {
-          txDigest: result.digest,
-          encryptedData,
-          encryptionKey,
-          amount: amountInSmallestUnit.toString(), // Store the raw amount
-          token: selectedToken.symbol,
-          timestamp,
-          sender: account.address,
-          recipient: account.address, // Store the recipient address
-          status: 'locked' as const
-        };
-
-        await saveEncryptedToken(encryptedToken);
-        await fetchBalances();
-        await fetchTransactionHistory();
-        setShowEncryptDialog(false);
-        setEncryptAmount("");
-
-        alert("Tokens locked successfully! The encryption key has been saved.");
+      if (!result) {
+        throw new Error('Transaction failed');
       }
+
+      console.log('Transaction result:', result);
+
+      // Get the transaction details to find the lock object ID
+      const client = new SuiClient({ url: getFullnodeUrl('testnet') });
+      
+      console.log('Waiting for transaction to be indexed...');
+      const txResponse = await getTransactionWithRetry(client, result.digest);
+
+      if (!txResponse || !txResponse.objectChanges) {
+        throw new Error('Failed to get transaction response or object changes');
+      }
+
+      console.log('Transaction response:', txResponse);
+
+      // Find the created shared object ID
+      let lockObjectId = null;
+      for (const change of txResponse.objectChanges) {
+        if (change.type === 'created' && change.owner && typeof change.owner === 'object' && 'Shared' in change.owner) {
+          lockObjectId = change.objectId;
+          console.log('Found lock object ID:', lockObjectId);
+          break;
+        }
+      }
+
+      if (!lockObjectId) {
+        console.error('Transaction response:', txResponse);
+        throw new Error('Failed to get lock object ID from transaction. Please check the transaction details.');
+      }
+
+      const encryptedToken = {
+        txDigest: result.digest,
+        encryptedData,
+        encryptionKey,
+        amount: amountInSmallestUnit.toString(),
+        token: selectedToken.symbol,
+        timestamp,
+        sender: account.address,
+        recipient: account.address,
+        status: 'locked' as const,
+        lockObjectId
+      };
+
+      console.log('Saving encrypted token:', encryptedToken);
+
+      await saveEncryptedToken(encryptedToken);
+      await fetchBalances();
+      await fetchTransactionHistory();
+      setShowEncryptDialog(false);
+      setEncryptAmount("");
+
+      alert("Tokens locked successfully! The encryption key has been saved.");
     } catch (error) {
       console.error("Encryption error:", error);
       alert(error instanceof Error ? error.message : "Failed to encrypt tokens. Please try again.");
@@ -501,7 +537,7 @@ export default function DashboardPage() {
                   <p className="text-gray-400">No recent activity</p>
                 ) : (
                   <div className="grid gap-4 pr-2">
-                    {recentTransactions.map((tx) => (
+                    {recentTransactions.map((tx: TransactionDisplayProps) => (
                       <div
                         key={tx.id}
                         className="p-4 rounded-lg border bg-gray-900 border-gray-700"
@@ -512,7 +548,8 @@ export default function DashboardPage() {
                               <span className={`px-2 py-1 rounded text-xs font-medium ${
                                 tx.type === 'Encrypt' ? 'bg-blue-900 text-blue-200' :
                                 tx.type === 'Send' ? 'bg-purple-900 text-purple-200' :
-                                'bg-green-900 text-green-200'
+                                tx.type === 'Receive' ? 'bg-green-900 text-green-200' :
+                                'bg-yellow-900 text-yellow-200'
                               }`}>
                                 {tx.type}
                               </span>
@@ -521,21 +558,26 @@ export default function DashboardPage() {
                             <p className="text-sm text-gray-400 mt-1">
                               Amount: {formatBalance(tx.amount, SUPPORTED_TOKENS[tx.tokenType]?.decimals || 9)}
                             </p>
+                            {tx.type !== 'Encrypt' && tx.sender && (
+                              <p className="text-sm text-gray-400">
+                                {tx.type === 'Send' ? 'To: ' : 'From: '}
+                                <span className="font-mono">
+                                  {(tx.type === 'Send' ? tx.recipient : tx.sender)?.slice(0, 8)}...
+                                  {(tx.type === 'Send' ? tx.recipient : tx.sender)?.slice(-6)}
+                                </span>
+                              </p>
+                            )}
                             <p className="text-sm text-gray-400">
-                              {new Intl.DateTimeFormat('en-US', {
-                                year: 'numeric',
-                                month: 'short',
-                                day: '2-digit',
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              }).format(new Date(tx.timestamp))}
+                              {new Date(tx.timestamp).toLocaleString()}
                             </p>
                           </div>
                           <div>
                             <span className={`px-2 py-1 rounded text-xs font-medium ${
                               tx.status === 'locked' ? 'bg-blue-900 text-blue-200' :
                               tx.status === 'sent' ? 'bg-purple-900 text-purple-200' :
-                              'bg-green-900 text-green-200'
+                              tx.status === 'received' ? 'bg-green-900 text-green-200' :
+                              tx.status === 'decrypted' ? 'bg-yellow-900 text-yellow-200' :
+                              'bg-gray-900 text-gray-200'
                             }`}>
                               {tx.status}
                             </span>

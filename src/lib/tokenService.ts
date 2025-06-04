@@ -12,6 +12,7 @@ export interface EncryptedTokenData {
   sender: string;
   recipient?: string;
   status: 'locked' | 'sent' | 'received';
+  lockObjectId: string;
 }
 
 export const saveEncryptedToken = async (tokenData: EncryptedTokenData): Promise<string> => {

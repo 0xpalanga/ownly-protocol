@@ -2,16 +2,28 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { getEncryptedTokensByStatus, SUPPORTED_TOKENS } from '@/lib/tokens';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { 
+  getEncryptedTokensByStatus, 
+  SUPPORTED_TOKENS, 
+  buildTransferTokenTransaction,
+  EncryptedTokenData 
+} from '@/lib/tokens';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { saveEncryptedToken } from '@/lib/tokens';
 import { BackButton } from '@/components/BackButton';
+import { Loader2 } from 'lucide-react';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { TransactionBlock } from '@mysten/sui.js/transactions';
+import { SuiClient, getFullnodeUrl } from '@mysten/sui.js/client';
 
 // Add formatBalance function
 const formatBalance = (balance: string, decimals: number = 9): string => {
@@ -49,23 +61,58 @@ interface EncryptedToken {
   txDigest: string;
   token: string;
   amount: string;
-  status: 'locked' | 'sent' | 'received';
+  status: 'locked' | 'sent' | 'received' | 'decrypted';
   timestamp: number;
   encryptedData: string;
   encryptionKey: string;
   sender: string;
+  recipient?: string;
+  lockObjectId: string;
 }
 
+// Add this CSS at the top of the file, after the imports:
+const scrollbarStyles = `
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+`;
+
 export default function SendPage() {
-  const [selectedToken, setSelectedToken] = useState<EncryptedToken | null>(null);
-  const [recipientAddress, setRecipientAddress] = useState('');
-  const [isLoading, setIsLoading] = useState(true);
-  const [encryptedTokens, setEncryptedTokens] = useState<EncryptedToken[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  
   const router = useRouter();
   const searchParams = useSearchParams();
   const account = useCurrentAccount();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+
+  const [selectedToken, setSelectedToken] = useState<EncryptedToken | null>(null);
+  const [recipientAddress, setRecipientAddress] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSending, setIsSending] = useState(false);
+  const [encryptedTokens, setEncryptedTokens] = useState<EncryptedToken[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [decryptedTokenIds, setDecryptedTokenIds] = useState<Set<string>>(new Set());
+  const [showSendDialog, setShowSendDialog] = useState(false);
+
+  // Load decrypted token IDs from localStorage on mount
+  useEffect(() => {
+    if (account) {
+      const storedIds = localStorage.getItem(`decrypted_tokens_${account.address}`);
+      if (storedIds) {
+        setDecryptedTokenIds(new Set(JSON.parse(storedIds)));
+      }
+    }
+  }, [account]);
 
   useEffect(() => {
     if (!account) {
@@ -78,33 +125,63 @@ export default function SendPage() {
     fetchEncryptedTokens(tokenId);
   }, [account, searchParams]);
 
+  // Add the styles to the page
+  useEffect(() => {
+    // Add the styles to the document
+    const styleElement = document.createElement('style');
+    styleElement.textContent = scrollbarStyles;
+    document.head.appendChild(styleElement);
+
+    // Cleanup
+    return () => {
+      document.head.removeChild(styleElement);
+    };
+  }, []);
+
   const fetchEncryptedTokens = async (tokenId?: string | null) => {
     if (!account) return;
     
     try {
       setError(null);
-      // Fetch locked tokens that can be sent
+      // Fetch only locked tokens that can be sent
       const tokens = await getEncryptedTokensByStatus('locked', account.address);
-      console.log('Fetched tokens:', tokens); // Debug log
+      console.log('Fetched tokens:', tokens);
       
-      // Format tokens for display
-      const formattedTokens = tokens.map(token => ({
-        id: token.id || token.txDigest,
-        txDigest: token.txDigest,
-        token: token.token,
-        amount: token.amount,
-        status: token.status,
-        timestamp: token.timestamp,
-        encryptedData: token.encryptedData,
-        encryptionKey: token.encryptionKey,
-        sender: token.sender
-      }));
+      // Format tokens for display and filter out decrypted or sent ones
+      const formattedTokens = tokens
+        .filter(token => {
+          // Filter out tokens that:
+          // 1. Are in decryptedTokenIds
+          // 2. Don't have a lockObjectId
+          // 3. Are not in 'locked' status
+          const id = token.id || token.txDigest;
+          return !decryptedTokenIds.has(id) && 
+                 token.status === 'locked' && 
+                 token.lockObjectId && 
+                 token.lockObjectId.length > 0;
+        })
+        .map(token => ({
+          id: token.id || token.txDigest,
+          txDigest: token.txDigest,
+          token: token.token,
+          amount: token.amount,
+          status: 'locked' as const,
+          timestamp: token.timestamp,
+          encryptedData: token.encryptedData,
+          encryptionKey: token.encryptionKey,
+          sender: token.sender,
+          lockObjectId: token.lockObjectId
+        }));
 
+      console.log('Formatted tokens:', formattedTokens);
       setEncryptedTokens(formattedTokens);
       
       if (tokenId) {
         const token = formattedTokens.find(t => t.id === tokenId);
-        if (token) setSelectedToken(token);
+        if (token) {
+          setSelectedToken(token);
+          setShowSendDialog(true);
+        }
       }
     } catch (error) {
       console.error('Error fetching tokens:', error);
@@ -114,15 +191,52 @@ export default function SendPage() {
     }
   };
 
+  // Add an effect to refresh the token list when decryptedTokenIds changes
+  useEffect(() => {
+    if (account) {
+      fetchEncryptedTokens();
+    }
+  }, [account, decryptedTokenIds]);
+
   const handleSend = async () => {
     if (!selectedToken || !recipientAddress || !account) return;
 
     try {
       setError(null);
+      setSuccess(null);
+      setIsSending(true);
       
       // Validate recipient address
       if (!recipientAddress.startsWith('0x') || recipientAddress.length !== 66) {
         throw new Error('Invalid recipient address format');
+      }
+
+      // Validate lockObjectId
+      if (!selectedToken.lockObjectId || selectedToken.lockObjectId.length === 0) {
+        throw new Error('Lock object ID not found. This token may have been already decrypted or sent.');
+      }
+
+      // Build and execute transfer transaction
+      const tx = buildTransferTokenTransaction(
+        recipientAddress,
+        BigInt(selectedToken.amount),
+        SUPPORTED_TOKENS[selectedToken.token]
+      );
+
+      tx.setSender(account.address);
+      
+      // Properly serialize and encode the transaction
+      const bytes = await tx.build({ 
+        client: new SuiClient({ url: getFullnodeUrl('testnet') })
+      });
+      const serializedTx = btoa(String.fromCharCode(...bytes));
+
+      const result = await signAndExecute({
+        transaction: serializedTx
+      });
+
+      if (!result) {
+        throw new Error('Transaction failed');
       }
 
       // Update token status in Firebase
@@ -134,7 +248,7 @@ export default function SendPage() {
       });
 
       // Create a new record for the recipient
-      const receivedToken = {
+      const receivedToken: EncryptedTokenData = {
         txDigest: selectedToken.txDigest,
         token: selectedToken.token,
         amount: selectedToken.amount,
@@ -142,118 +256,186 @@ export default function SendPage() {
         encryptionKey: selectedToken.encryptionKey,
         sender: account.address,
         recipient: recipientAddress,
-        status: 'received' as const,
-        timestamp: Date.now()
+        status: 'received',
+        timestamp: Date.now(),
+        lockObjectId: selectedToken.lockObjectId
       };
 
       await saveEncryptedToken(receivedToken);
 
-      // Update UI
-      setEncryptedTokens(prev => 
-        prev.filter(t => t.id !== selectedToken.id)
-      );
+      // After successful send, update the local state immediately
+      setEncryptedTokens(prev => prev.filter(t => t.id !== selectedToken.id));
       setSelectedToken(null);
       setRecipientAddress('');
+      setShowSendDialog(false);
+      setSuccess('Token sent successfully! Redirecting to dashboard...');
 
-      // Redirect back to dashboard
-      router.push('/dashboard');
+      // Redirect back to dashboard after a short delay
+      setTimeout(() => {
+        router.push('/dashboard');
+      }, 2000);
     } catch (error) {
       console.error('Send failed:', error);
       setError(error instanceof Error ? error.message : 'Failed to send token. Please try again.');
+    } finally {
+      setIsSending(false);
     }
   };
 
   if (!account) {
-    return null; // Will redirect in useEffect
-  }
-
-  if (isLoading) {
-    return (
-      <div className="container mx-auto p-4">
-        <div className="text-center py-12">
-          Loading encrypted tokens...
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (
-    <div className="container mx-auto p-4">
-      <BackButton />
-      <h1 className="text-2xl font-bold mb-6">Send Encrypted Tokens</h1>
+    <div className="container mx-auto p-4 max-w-4xl">
+      <div className="mb-8">
+        <BackButton />
+        <h1 className="text-3xl font-bold mt-4 mb-2">Send Encrypted Tokens</h1>
+        <p className="text-gray-400">Transfer your encrypted tokens to another address securely</p>
+      </div>
       
       {error && (
-        <div className="bg-red-900 text-red-200 p-4 rounded mb-6">
-          {error}
-        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {success && (
+        <Alert className="mb-6 bg-green-900 border-green-800">
+          <AlertDescription className="text-green-200">{success}</AlertDescription>
+        </Alert>
       )}
       
-      <div className="grid gap-6">
-        {/* Token Selection */}
-        <Card className="p-6 bg-gray-800 border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Select Token to Send</h2>
-          <div className="space-y-4">
-            {encryptedTokens.length === 0 ? (
-              <p className="text-gray-400">No encrypted tokens available to send</p>
-            ) : (
+      <Card className="p-6 bg-gray-800/50 border-gray-700 backdrop-blur-sm">
+        <h2 className="text-xl font-semibold mb-4">Select Token to Send</h2>
+        <div className="space-y-4">
+          {isLoading ? (
+            <div className="space-y-4">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-24 w-full bg-gray-700" />
+              ))}
+            </div>
+          ) : encryptedTokens.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-gray-400 mb-4">No encrypted tokens available to send</p>
+              <Button onClick={() => router.push('/dashboard')} variant="outline">
+                Return to Dashboard
+              </Button>
+            </div>
+          ) : (
+            <div className="max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
               <div className="grid gap-4">
                 {encryptedTokens.map((token) => (
                   <div
                     key={token.id}
-                    className={`p-4 rounded-lg border cursor-pointer transition-colors ${
+                    className={`p-4 rounded-lg border cursor-pointer transition-all transform hover:scale-[1.02] ${
                       selectedToken?.id === token.id
-                        ? 'bg-blue-900 border-blue-700'
-                        : 'bg-gray-900 border-gray-700 hover:border-gray-600'
+                        ? 'bg-blue-900/50 border-blue-700 ring-2 ring-blue-500'
+                        : 'bg-gray-900/50 border-gray-700 hover:border-gray-600'
                     }`}
-                    onClick={() => setSelectedToken(token)}
+                    onClick={() => {
+                      setSelectedToken(token);
+                      setShowSendDialog(true);
+                    }}
                   >
                     <div className="flex justify-between items-center">
                       <div>
-                        <h3 className="font-medium">{token.token}</h3>
-                        <p className="text-sm text-gray-400">
-                          Amount: {formatBalance(token.amount, SUPPORTED_TOKENS[token.token]?.decimals || 9)}
+                        <div className="flex items-center gap-2 mb-2">
+                          <h3 className="font-medium text-lg">{token.token}</h3>
+                          <Badge variant="secondary" className="bg-blue-900 text-blue-200">
+                            {token.status}
+                          </Badge>
+                        </div>
+                        <p className="text-lg font-semibold text-white mb-1">
+                          {formatBalance(token.amount, SUPPORTED_TOKENS[token.token]?.decimals || 9)}
+                          <span className="text-sm text-gray-400 ml-1">{token.token}</span>
                         </p>
                         <p className="text-sm text-gray-400">
-                          Created: {new Date(token.timestamp).toLocaleString()}
+                          Created {new Date(token.timestamp).toLocaleDateString()} at{' '}
+                          {new Date(token.timestamp).toLocaleTimeString()}
                         </p>
                       </div>
-                      <div className="text-sm">
-                        <span className="px-2 py-1 rounded bg-blue-900 text-blue-200">
-                          {token.status}
-                        </span>
+                      <div className="flex items-center gap-2">
+                        <Button variant="outline" className="border-blue-500 text-blue-200">
+                          Send
+                        </Button>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </div>
-        </Card>
+            </div>
+          )}
+        </div>
+      </Card>
 
-        {/* Recipient Details */}
-        <Card className="p-6 bg-gray-800 border-gray-700">
-          <h2 className="text-lg font-semibold mb-4">Recipient Details</h2>
-          <div className="space-y-4">
+      {/* Send Dialog */}
+      <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Token</DialogTitle>
+            <DialogDescription>
+              Enter the recipient's address to send the selected token
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {selectedToken && (
+              <div className="p-4 rounded-lg bg-gray-900/50 border border-gray-700">
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="font-medium">{selectedToken.token}</h3>
+                  <Badge variant="secondary" className="bg-blue-900 text-blue-200">
+                    {selectedToken.status}
+                  </Badge>
+                </div>
+                <p className="text-lg font-semibold text-white">
+                  {formatBalance(selectedToken.amount, SUPPORTED_TOKENS[selectedToken.token]?.decimals || 9)}
+                  <span className="text-sm text-gray-400 ml-1">{selectedToken.token}</span>
+                </p>
+              </div>
+            )}
             <div>
-              <Label htmlFor="recipient">Recipient Address</Label>
+              <Label htmlFor="recipient" className="text-sm font-medium mb-1.5">
+                Recipient Address
+              </Label>
               <Input
                 id="recipient"
                 value={recipientAddress}
                 onChange={(e) => setRecipientAddress(e.target.value)}
-                placeholder="Enter recipient's Sui address"
-                className="bg-gray-900 border-gray-700"
+                placeholder="Enter recipient's Sui address (0x...)"
+                className="bg-gray-900/50 border-gray-700 h-12"
               />
+              <p className="text-sm text-gray-400 mt-2">
+                Make sure to double-check the recipient's address before sending
+              </p>
             </div>
-            <Button
-              onClick={handleSend}
-              disabled={!selectedToken || !recipientAddress}
-              className="w-full"
-            >
-              Send Token
-            </Button>
+            <div className="flex justify-end gap-4 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowSendDialog(false);
+                  setRecipientAddress('');
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSend}
+                disabled={!selectedToken || !recipientAddress || isSending}
+                className="relative"
+              >
+                {isSending ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  'Send Token'
+                )}
+              </Button>
+            </div>
           </div>
-        </Card>
-      </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 } 
