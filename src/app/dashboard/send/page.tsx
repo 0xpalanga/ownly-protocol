@@ -272,7 +272,7 @@ export default function SendPage() {
 
       // Redirect back to dashboard after a short delay
       setTimeout(() => {
-        router.push('/dashboard');
+      router.push('/dashboard');
       }, 2000);
     } catch (error) {
       console.error('Send failed:', error);
@@ -286,7 +286,7 @@ export default function SendPage() {
     return null;
   }
 
-  return (
+    return (
     <div className="container mx-auto p-4 max-w-4xl">
       <div className="mb-8">
         <BackButton />
@@ -310,7 +310,7 @@ export default function SendPage() {
         <h2 className="text-xl font-semibold mb-4">Select Token to Send</h2>
         <div className="space-y-4">
           {isLoading ? (
-            <div className="space-y-4">
+          <div className="space-y-4">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-24 w-full bg-gray-700" />
               ))}
@@ -364,10 +364,10 @@ export default function SendPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-      </Card>
+              </div>
+            )}
+          </div>
+        </Card>
 
       {/* Send Dialog */}
       <Dialog open={showSendDialog} onOpenChange={setShowSendDialog}>
@@ -379,7 +379,7 @@ export default function SendPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            {selectedToken && (
+        {selectedToken && (
               <div className="p-4 rounded-lg bg-gray-900/50 border border-gray-700">
                 <div className="flex items-center gap-2 mb-2">
                   <h3 className="font-medium">{selectedToken.token}</h3>
@@ -393,21 +393,21 @@ export default function SendPage() {
                 </p>
               </div>
             )}
-            <div>
+              <div>
               <Label htmlFor="recipient" className="text-sm font-medium mb-1.5">
                 Recipient Address
               </Label>
-              <Input
+                <Input
                 id="recipient"
-                value={recipientAddress}
-                onChange={(e) => setRecipientAddress(e.target.value)}
+                  value={recipientAddress}
+                  onChange={(e) => setRecipientAddress(e.target.value)}
                 placeholder="Enter recipient's Sui address (0x...)"
                 className="bg-gray-900/50 border-gray-700 h-12"
-              />
+                />
               <p className="text-sm text-gray-400 mt-2">
                 Make sure to double-check the recipient's address before sending
               </p>
-            </div>
+              </div>
             <div className="flex justify-end gap-4 pt-4">
               <Button
                 variant="outline"
@@ -418,8 +418,8 @@ export default function SendPage() {
               >
                 Cancel
               </Button>
-              <Button
-                onClick={handleSend}
+                <Button
+                  onClick={handleSend}
                 disabled={!selectedToken || !recipientAddress || isSending}
                 className="relative"
               >
@@ -431,9 +431,9 @@ export default function SendPage() {
                 ) : (
                   'Send Token'
                 )}
-              </Button>
+                </Button>
+              </div>
             </div>
-          </div>
         </DialogContent>
       </Dialog>
     </div>

@@ -70,7 +70,7 @@ const getTransactionWithRetry = async (client: SuiClient, digest: string, maxRet
       });
       
       return txResponse;
-    } catch (error) {
+  } catch (error) {
       console.log(`Attempt ${i + 1} failed, retrying...`);
       if (i === maxRetries - 1) throw error;
     }
@@ -362,28 +362,28 @@ export default function DashboardPage() {
         throw new Error('Failed to get lock object ID from transaction. Please check the transaction details.');
       }
 
-      const encryptedToken = {
-        txDigest: result.digest,
-        encryptedData,
-        encryptionKey,
-        amount: amountInSmallestUnit.toString(),
-        token: selectedToken.symbol,
+        const encryptedToken = {
+          txDigest: result.digest,
+          encryptedData,
+          encryptionKey,
+          amount: amountInSmallestUnit.toString(),
+          token: selectedToken.symbol,
         timestamp,
-        sender: account.address,
+          sender: account.address,
         recipient: account.address,
         status: 'locked' as const,
         lockObjectId
-      };
+        };
 
       console.log('Saving encrypted token:', encryptedToken);
 
       await saveEncryptedToken(encryptedToken);
-      await fetchBalances();
-      await fetchTransactionHistory();
-      setShowEncryptDialog(false);
-      setEncryptAmount("");
+        await fetchBalances();
+        await fetchTransactionHistory();
+        setShowEncryptDialog(false);
+        setEncryptAmount("");
 
-      alert("Tokens locked successfully! The encryption key has been saved.");
+        alert("Tokens locked successfully! The encryption key has been saved.");
     } catch (error) {
       console.error("Encryption error:", error);
       alert(error instanceof Error ? error.message : "Failed to encrypt tokens. Please try again.");
@@ -479,13 +479,13 @@ export default function DashboardPage() {
           <div className="col-span-12 md:col-span-4 space-y-4">
             <h2 className="text-xl font-semibold mb-4">Token Balances</h2>
             {Object.entries(SUPPORTED_TOKENS).map(([symbol, token]) => (
-              <Card key={`token-${symbol}`} className="p-4 border-gray-700 bg-gray-800">
+              <Card key={`token-${symbol}`} className="p-4 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
                 <div className="flex justify-between items-center">
                   <div>
-                    <h3 className="text-lg font-semibold text-white">{token.name}</h3>
-                    <p className="text-sm text-gray-400">{symbol}</p>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{token.name}</h3>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">{symbol}</p>
                   </div>
-                  <p className="text-xl text-white">
+                  <p className="text-xl text-gray-900 dark:text-white">
                     {formatBalance(tokenBalances[symbol] || "0", token.decimals)}
                   </p>
                 </div>
@@ -497,29 +497,29 @@ export default function DashboardPage() {
           <div className="col-span-12 md:col-span-8">
             {/* Action Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-              <Card className="p-6 border-gray-700 bg-gray-800">
+              <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold mb-4">ENCRYPT</h2>
-                <p className="text-sm text-gray-400 mb-4">Encrypt your tokens for secure storage</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Encrypt your tokens for secure storage</p>
                 <Button
                   onClick={() => setShowEncryptDialog(true)}
-                  className="w-full bg-blue-600 hover:bg-blue-700"
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   Encrypt Tokens
                 </Button>
               </Card>
-              <Card className="p-6 border-gray-700 bg-gray-800">
+              <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold mb-4">SEND</h2>
-                <p className="text-sm text-gray-400 mb-4">Send your encrypted tokens</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">Send your encrypted tokens</p>
                 <Button
                   onClick={() => router.push('/dashboard/send')}
-                  className="w-full bg-green-600 hover:bg-green-700"
+                  className="w-full bg-green-600 hover:bg-green-700 text-white"
                 >
                   Send Tokens
                 </Button>
               </Card>
-              <Card className="p-6 border-gray-700 bg-gray-800">
+              <Card className="p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
                 <h2 className="text-lg font-semibold mb-4">DECRYPT</h2>
-                <p className="text-sm text-gray-400 mb-4">View and decrypt received tokens</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">View and decrypt received tokens</p>
                 <Button
                   onClick={() => router.push('/dashboard/decrypt')}
                   className="w-full"
@@ -530,22 +530,22 @@ export default function DashboardPage() {
             </div>
 
             {/* Recent Activity */}
-            <Card className="col-span-2 p-6 bg-gray-800 border-gray-700">
+            <Card className="col-span-2 p-6 bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700">
               <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
               <div className="space-y-4 max-h-[400px] overflow-y-auto custom-scrollbar">
                 {recentTransactions.length === 0 ? (
-                  <p className="text-gray-400">No recent activity</p>
+                  <p className="text-gray-500 dark:text-gray-400">No recent activity</p>
                 ) : (
                   <div className="grid gap-4 pr-2">
                     {recentTransactions.map((tx: TransactionDisplayProps) => (
                       <div
                         key={tx.id}
-                        className="p-4 rounded-lg border bg-gray-900 border-gray-700"
+                        className="p-4 rounded-lg border bg-gray-50 dark:bg-gray-900 border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex justify-between items-center">
                           <div>
                             <div className="flex items-center gap-2">
-                              <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
                                 tx.type === 'Encrypt' ? 'bg-blue-900 text-blue-200' :
                                 tx.type === 'Send' ? 'bg-purple-900 text-purple-200' :
                                 tx.type === 'Receive' ? 'bg-green-900 text-green-200' :
@@ -555,19 +555,19 @@ export default function DashboardPage() {
                               </span>
                               <h3 className="font-medium">{tx.tokenType}</h3>
                             </div>
-                            <p className="text-sm text-gray-400 mt-1">
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
                               Amount: {formatBalance(tx.amount, SUPPORTED_TOKENS[tx.tokenType]?.decimals || 9)}
                             </p>
                             {tx.type !== 'Encrypt' && tx.sender && (
-                              <p className="text-sm text-gray-400">
+                              <p className="text-sm text-gray-500 dark:text-gray-400">
                                 {tx.type === 'Send' ? 'To: ' : 'From: '}
                                 <span className="font-mono">
                                   {(tx.type === 'Send' ? tx.recipient : tx.sender)?.slice(0, 8)}...
                                   {(tx.type === 'Send' ? tx.recipient : tx.sender)?.slice(-6)}
-                                </span>
+                            </span>
                               </p>
                             )}
-                            <p className="text-sm text-gray-400">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
                               {new Date(tx.timestamp).toLocaleString()}
                             </p>
                           </div>

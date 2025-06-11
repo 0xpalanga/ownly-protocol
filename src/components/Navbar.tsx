@@ -1,25 +1,26 @@
-import Link from 'next/link';
 import { useCurrentAccount } from '@mysten/dapp-kit';
-import { ConnectButton } from '@mysten/dapp-kit';
+import { Button } from './ui/button';
+import { ThemeToggle } from './ThemeToggle';
+import Link from 'next/link';
 
 export function Navbar() {
   const account = useCurrentAccount();
 
   return (
-    <nav className="bg-gray-900 text-white shadow-lg">
-      <div className="container mx-auto px-6 py-3">
-        <div className="flex items-center justify-between">
-          {/* Logo and Testnet Indicator */}
-          <div className="flex items-center gap-4">
-            <Link href="/" className="text-xl font-bold">
-              Ownly Protocol
-            </Link>
-            <span className="text-sm text-red-500 animate-pulse"><b>TESNET</b></span>
-          </div>
+    <nav className="border-b bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800">
+      <div className="container mx-auto px-4 py-4">
+        <div className="flex justify-between items-center">
+          <Link href="/" className="text-xl font-bold text-gray-900 dark:text-white">
+            Ownly Protocol
+          </Link>
           
-          {/* Wallet Connection - Right Side */}
-          <div className="flex-shrink-0">
-            <ConnectButton />
+          <div className="flex items-center space-x-4">
+            <ThemeToggle />
+            {account && (
+              <div className="text-sm text-gray-600 dark:text-gray-300">
+                {account.address.slice(0, 6)}...{account.address.slice(-4)}
+              </div>
+            )}
           </div>
         </div>
       </div>
