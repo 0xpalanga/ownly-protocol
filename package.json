@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "ESLINT_CONFIG_FILE=.eslintrc.production.json next build",
     "start": "next start",
     "lint": "next lint"
   },

@@ -4,6 +4,8 @@ import { bcs } from '@mysten/sui.js/bcs';
 import type { EncryptedTokenData } from './tokenService';
 import * as tokenService from './tokenService';
 import CryptoJS from 'crypto-js';
+import { PACKAGE_ID, LOCKER_ID } from './constants';
+import { db } from './firebase';
 
 // Update the transaction event types
 export type TransactionType = 'Encrypt' | 'Lock' | 'Unlock' | 'Send' | 'Receive' | 'Transaction';
@@ -59,22 +61,60 @@ export const SUPPORTED_TOKENS: { [key: string]: TokenInfo } = {
   },
 };
 
-const client = new SuiClient({ url: getFullnodeUrl("testnet") });
+// Initialize SUI client with fallback URLs
+const NETWORK_URLS = [
+  'https://fullnode.testnet.sui.io',
+  'https://sui-testnet.blockvision.org',
+  'https://sui-testnet-rpc.allthatnode.com'
+];
 
-export async function getTokenBalance(address: string, token: TokenInfo): Promise<string> {
-  try {
-    const { data: coins } = await client.getCoins({
+let currentUrlIndex = 0;
+
+const getSuiClient = () => {
+  return new SuiClient({ url: NETWORK_URLS[currentUrlIndex] });
+};
+
+// Retry mechanism for network requests
+const withRetry = async <T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> => {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      console.error(`Attempt ${i + 1} failed:`, error);
+      
+      // If we haven't tried all URLs yet, switch to the next one
+      if (error instanceof Error && error.message.includes('Failed to fetch')) {
+        currentUrlIndex = (currentUrlIndex + 1) % NETWORK_URLS.length;
+        console.log(`Switching to backup URL: ${NETWORK_URLS[currentUrlIndex]}`);
+      }
+      
+      // If this was the last attempt, throw the error
+      if (i === maxRetries - 1) throw error;
+      
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+    }
+  }
+  throw new Error('All retry attempts failed');
+};
+
+// Update getTokenBalance to use retry mechanism
+export const getTokenBalance = async (address: string, token: TokenInfo): Promise<string> => {
+  return withRetry(async () => {
+    const client = getSuiClient();
+    const coins = await client.getCoins({
       owner: address,
       coinType: token.coinType
     });
-
-    const totalBalance = coins.reduce((acc: bigint, coin: { balance: string }) => acc + BigInt(coin.balance), BigInt(0));
+    
+    // Sum up all coin balances
+    const totalBalance = coins.data
+      .map(coin => BigInt(coin.balance))
+      .reduce((a, b) => a + b, BigInt(0));
+    
     return totalBalance.toString();
-  } catch (error) {
-    console.error(`Error fetching ${token.symbol} balance:`, error);
-    return '0';
-  }
-}
+  });
+};
 
 export function buildLockTokenTransaction(
   amount: bigint,
@@ -211,7 +251,7 @@ export function buildEncryptTokenTransaction(
 
 export async function getTransactionHistory(address: string): Promise<any[]> {
   try {
-    const { data: transactions } = await client.queryTransactionBlocks({
+    const { data: transactions } = await getSuiClient().queryTransactionBlocks({
       filter: {
         FromAddress: address
       },
@@ -238,7 +278,7 @@ export async function verifyContractModule() {
       throw new Error("Package ID not configured");
     }
 
-    const client = new SuiClient({ url: getFullnodeUrl("testnet") });
+    const client = getSuiClient();
     
     // Get package info
     const { data: packageInfo } = await client.getObject({

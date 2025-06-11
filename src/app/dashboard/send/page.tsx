@@ -216,7 +216,33 @@ export default function SendPage() {
         throw new Error('Lock object ID not found. This token may have been already decrypted or sent.');
       }
 
-      // Build and execute transfer transaction
+      // Create a new record for the recipient first
+      const receivedToken: EncryptedTokenData = {
+        id: `${selectedToken.txDigest}-${Date.now()}`, // Ensure unique ID
+        txDigest: selectedToken.txDigest,
+        token: selectedToken.token,
+        amount: selectedToken.amount,
+        encryptedData: selectedToken.encryptedData,
+        encryptionKey: selectedToken.encryptionKey,
+        sender: account.address,
+        recipient: recipientAddress,
+        status: 'received',
+        timestamp: Date.now(),
+        lockObjectId: selectedToken.lockObjectId
+      };
+
+      // Save the received token record first
+      await saveEncryptedToken(receivedToken);
+
+      // Update the sender's token status
+      const tokenRef = doc(db, 'encryptedTokens', selectedToken.id);
+      await updateDoc(tokenRef, {
+        status: 'sent',
+        recipient: recipientAddress,
+        sentAt: Date.now()
+      });
+
+      // After successful database updates, build and execute the transfer transaction
       const tx = buildTransferTokenTransaction(
         recipientAddress,
         BigInt(selectedToken.amount),
@@ -239,30 +265,6 @@ export default function SendPage() {
         throw new Error('Transaction failed');
       }
 
-      // Update token status in Firebase
-      const tokenRef = doc(db, 'encryptedTokens', selectedToken.id);
-      await updateDoc(tokenRef, {
-        status: 'sent',
-        recipient: recipientAddress,
-        sentAt: Date.now()
-      });
-
-      // Create a new record for the recipient
-      const receivedToken: EncryptedTokenData = {
-        txDigest: selectedToken.txDigest,
-        token: selectedToken.token,
-        amount: selectedToken.amount,
-        encryptedData: selectedToken.encryptedData,
-        encryptionKey: selectedToken.encryptionKey,
-        sender: account.address,
-        recipient: recipientAddress,
-        status: 'received',
-        timestamp: Date.now(),
-        lockObjectId: selectedToken.lockObjectId
-      };
-
-      await saveEncryptedToken(receivedToken);
-
       // After successful send, update the local state immediately
       setEncryptedTokens(prev => prev.filter(t => t.id !== selectedToken.id));
       setSelectedToken(null);
@@ -272,7 +274,7 @@ export default function SendPage() {
 
       // Redirect back to dashboard after a short delay
       setTimeout(() => {
-      router.push('/dashboard');
+        router.push('/dashboard');
       }, 2000);
     } catch (error) {
       console.error('Send failed:', error);

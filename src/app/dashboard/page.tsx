@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { useCurrentAccount, useWallets, useConnectWallet, useSignAndExecuteTransaction } from "@mysten/dapp-kit";
+import { useCurrentAccount, useWallets, useConnectWallet, useSignAndExecuteTransaction, ConnectButton } from "@mysten/dapp-kit";
 import { 
   SUPPORTED_TOKENS, 
   TokenInfo, 
@@ -94,6 +94,7 @@ export default function DashboardPage() {
   const [contractError, setContractError] = useState<string | null>(null);
   const [encryptedTokens, setEncryptedTokens] = useState<EncryptedTokenData[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<TransactionDisplayProps[]>([]);
+  const [error, setError] = useState<string | null>(null);
   
   const router = useRouter();
   const account = useCurrentAccount();
@@ -101,7 +102,119 @@ export default function DashboardPage() {
   const { mutateAsync: connectWallet } = useConnectWallet();
   const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
 
-  // Check authentication and load data
+  // Fetch balances
+  const fetchBalances = async () => {
+    if (!account) return;
+
+    try {
+      const balances: { [key: string]: string } = {};
+      let hasError = false;
+
+      // Try to fetch each token balance
+      await Promise.all(
+        Object.entries(SUPPORTED_TOKENS).map(async ([symbol, token]) => {
+          try {
+            const balance = await getTokenBalance(account.address, token);
+            balances[symbol] = balance;
+          } catch (error) {
+            console.error(`Error fetching ${symbol} balance:`, error);
+            balances[symbol] = '0';
+            hasError = true;
+          }
+        })
+      );
+
+      setTokenBalances(balances);
+      setIsLoading(false);
+
+      // If there was an error, but we got some balances, we can still show them
+      if (hasError) {
+        console.warn('Some token balances failed to load. Retrying in background...');
+        // Try again in the background after a delay
+        setTimeout(fetchBalances, 5000);
+      }
+    } catch (error) {
+      console.error("Error fetching balances:", error);
+      setIsLoading(false);
+      // Show error state but don't prevent the UI from loading
+      setError("Some balances may be temporarily unavailable");
+    }
+  };
+
+  // Update fetchTransactionHistory
+  const fetchTransactionHistory = async () => {
+    if (!account) return;
+    try {
+      const [locked, sent, received, decrypted] = await Promise.all([
+        getEncryptedTokensByStatus('locked', account.address),
+        getEncryptedTokensByStatus('sent', account.address),
+        getEncryptedTokensByStatus('received', account.address),
+        getEncryptedTokensByStatus('decrypted', account.address)
+      ]);
+
+      // Update the transaction processing
+      const allTransactions = [
+        ...locked.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Encrypt' as const,
+          token: token.token,
+          amount: token.amount,
+          status: token.status,
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
+        })),
+        ...sent.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Send' as const,
+          token: token.token,
+          amount: token.amount,
+          status: token.status,
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
+        })),
+        ...received.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Receive' as const,
+          token: token.token,
+          amount: token.amount,
+          status: token.status,
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
+        })),
+        ...decrypted.map(token => ({
+          id: token.id || token.txDigest,
+          type: 'Decrypt' as const,
+          token: token.token,
+          amount: token.amount,
+          status: token.status,
+          timestamp: token.timestamp,
+          sender: token.sender,
+          recipient: token.recipient
+        }))
+      ];
+
+      // Create a Map to store unique transactions
+      const uniqueTransactions = new Map();
+
+      // Add all transactions to the Map, automatically removing duplicates
+      allTransactions.forEach(transaction => {
+        uniqueTransactions.set(transaction.id, transaction);
+      });
+
+      // Convert back to array, sort, and limit
+      const finalTransactions = Array.from(uniqueTransactions.values())
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10);
+
+      setRecentTransactions(finalTransactions);
+    } catch (error) {
+      console.error('Error fetching transaction history:', error);
+    }
+  };
+
   useEffect(() => {
     const isInternalWalletConnected = Cookies.get('internal_wallet_connected') === 'true';
     const isSuiWalletConnected = Cookies.get('sui_wallet_connected') === 'true';
@@ -122,6 +235,7 @@ export default function DashboardPage() {
           ]);
         } catch (error) {
           console.error('Error refreshing data:', error);
+          setError("Failed to refresh data. Will retry automatically.");
         } finally {
           setIsLoading(false);
         }
@@ -131,12 +245,12 @@ export default function DashboardPage() {
       setConnected(true);
       setIsAuthenticated(true);
 
-      // Set up an interval to refresh balances periodically
-      const refreshInterval = setInterval(refreshData, 5000); // Refresh every 5 seconds
+      // Set up an interval to refresh balances periodically (every 30 seconds instead of 5)
+      const refreshInterval = setInterval(refreshData, 30000);
 
       return () => clearInterval(refreshInterval);
     }
-  }, [account]); // Remove router.asPath dependency
+  }, [account, router]);
 
   // Add contract verification
   useEffect(() => {
@@ -158,24 +272,6 @@ export default function DashboardPage() {
     }
   }, [account]);
 
-  // Fetch balances
-  const fetchBalances = async () => {
-    if (!account) return;
-
-    try {
-      const balances: { [key: string]: string } = {};
-      for (const [symbol, token] of Object.entries(SUPPORTED_TOKENS)) {
-        const balance = await getTokenBalance(account.address, token);
-        balances[symbol] = balance;
-      }
-      setTokenBalances(balances);
-      setIsLoading(false);
-    } catch (error) {
-      console.error("Error fetching balances:", error);
-      setIsLoading(false);
-    }
-  };
-
   // Update the formatTransactionDisplay function
   const formatTransactionDisplay = (tx: any): TransactionDisplayProps => {
     return {
@@ -188,80 +284,6 @@ export default function DashboardPage() {
       sender: tx.sender || '',
       recipient: tx.recipient
     };
-  };
-
-  // Update fetchTransactionHistory
-  const fetchTransactionHistory = async () => {
-    if (!account) return;
-    try {
-      const [locked, sent, received, decrypted] = await Promise.all([
-        getEncryptedTokensByStatus('locked', account.address),
-        getEncryptedTokensByStatus('sent', account.address),
-        getEncryptedTokensByStatus('received', account.address),
-        getEncryptedTokensByStatus('decrypted', account.address)
-      ]);
-
-      // Update the transaction processing
-      const allTransactions: TransactionDisplayProps[] = [
-        ...locked.map(token => ({
-          id: `${token.id || token.txDigest}-locked-${token.timestamp}`,
-          type: 'Encrypt' as const,
-          tokenType: token.token,
-          amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
-          timestamp: token.timestamp,
-          sender: token.sender,
-          recipient: token.recipient
-        })),
-        ...sent.map(token => ({
-          id: `${token.id || token.txDigest}-sent-${token.timestamp}`,
-          type: 'Send' as const,
-          tokenType: token.token,
-          amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
-          timestamp: token.timestamp,
-          sender: token.sender,
-          recipient: token.recipient
-        })),
-        ...received.map(token => ({
-          id: `${token.id || token.txDigest}-received-${token.timestamp}`,
-          type: 'Receive' as const,
-          tokenType: token.token,
-          amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
-          timestamp: token.timestamp,
-          sender: token.sender,
-          recipient: token.recipient
-        })),
-        ...decrypted.map(token => ({
-          id: `${token.id || token.txDigest}-decrypted-${token.timestamp}`,
-          type: 'Decrypt' as const,
-          tokenType: token.token,
-          amount: formatTransactionAmount(token.amount, token.token),
-          status: token.status as 'locked' | 'sent' | 'received' | 'decrypted',
-          timestamp: token.timestamp,
-          sender: token.sender,
-          recipient: token.recipient
-        }))
-      ]
-
-      // Create a Map to store unique transactions
-      const uniqueTransactions = new Map<string, TransactionDisplayProps>();
-
-      // Add all transactions to the Map, automatically removing duplicates
-      allTransactions.forEach(transaction => {
-        uniqueTransactions.set(transaction.id, transaction);
-      });
-
-      // Convert back to array, sort, and limit
-      const finalTransactions = Array.from(uniqueTransactions.values())
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 10);
-
-      setRecentTransactions(finalTransactions);
-    } catch (error) {
-      console.error('Error fetching transaction history:', error);
-    }
   };
 
   // Update handleEncrypt function
@@ -408,9 +430,29 @@ export default function DashboardPage() {
 
   // Handle wallet disconnection
   const handleDisconnect = () => {
-    Cookies.remove('sui_wallet_connected');
-    Cookies.remove('internal_wallet_connected');
-    router.push('/');
+    try {
+      // Remove wallet connection cookies
+      Cookies.remove('internal_wallet_connected', { path: '/' });
+      Cookies.remove('internal_wallet_address', { path: '/' });
+      Cookies.remove('sui_wallet_connected', { path: '/' });
+
+      // Clear local storage if needed
+      localStorage.removeItem('ownly_internal_wallet');
+      localStorage.removeItem('ownly_wallet_exists');
+
+      // Reset states
+      setConnected(false);
+      setIsAuthenticated(false);
+      setTokenBalances({});
+      setRecentTransactions([]);
+
+      // Redirect to home page
+      router.push('/');
+    } catch (error) {
+      console.error('Error disconnecting wallet:', error);
+      // Still try to redirect even if there's an error
+      router.push('/');
+    }
   };
 
   const authenticateUser = async () => {
@@ -426,7 +468,10 @@ export default function DashboardPage() {
       <main className="min-h-screen bg-gray-950 text-white flex items-center justify-center">
         <div className="text-center space-y-6">
           <h1 className="text-4xl font-bold">Ownly Protocol</h1>
-          <p className="text-gray-400">Please connect your wallet using the button in the navigation bar</p>
+          <p className="text-gray-400">Please connect your external wallet here.</p>
+          <div className="flex justify-center">
+            <ConnectButton />
+          </div>
         </div>
       </main>
     );
@@ -466,12 +511,14 @@ export default function DashboardPage() {
     
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-bold">Dashboard</h1>
-        <button
-            onClick={() => router.push('/dashboard/history')}
-            className="px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
-          >
-            History
-          </button>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => router.push('/dashboard/history')}
+              className="px-4 py-2 rounded-lg text-gray-300 hover:text-white hover:bg-gray-700 transition-colors"
+            >
+              History
+            </button>
+             </div>
         </div>
 
         <div className="grid grid-cols-12 gap-6">

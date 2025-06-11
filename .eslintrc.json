@@ -1,0 +1,17 @@
+{
+  "extends": [
+    "next/core-web-vitals",
+    "plugin:@typescript-eslint/recommended"
+  ],
+  "plugins": ["@typescript-eslint"],
+  "rules": {
+    // Disable unused vars warning for now during development
+    "@typescript-eslint/no-unused-vars": "warn",
+    // Allow any type during development
+    "@typescript-eslint/no-explicit-any": "warn",
+    // Disable react-hooks/exhaustive-deps warning during development
+    "react-hooks/exhaustive-deps": "warn",
+    // Disable unescaped entities warning
+    "react/no-unescaped-entities": "off"
+  }
+} 

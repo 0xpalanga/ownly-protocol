@@ -9,9 +9,9 @@ import { Label } from "@/components/ui/label";
 import { Card } from '@/components/ui/card';
 import Cookies from 'js-cookie';
 
-import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
-import { fromBase64, toBase64 } from "@mysten/sui/utils";
-import CryptoJS from "crypto-js";
+import { Ed25519Keypair } from '@mysten/sui.js/keypairs/ed25519';
+import { fromB64, toB64 } from '@mysten/sui.js/utils';
+import CryptoJS from 'crypto-js';
 import { signInAnonymously, signInWithCustomToken } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { BIP39_WORDS } from "./bip39_words";
@@ -85,15 +85,14 @@ class WalletUtils {
 
   // Encrypt private key with password
   static encryptPrivateKey(privateKey: Uint8Array, password: string): string {
-    const privateKeyB64 = toBase64(privateKey);
+    const privateKeyB64 = toB64(privateKey);
     return CryptoJS.AES.encrypt(privateKeyB64, password).toString();
   }
 
   // Decrypt private key with password
   static decryptPrivateKey(encryptedPrivateKey: string, password: string): Uint8Array {
-    const bytes = CryptoJS.AES.decrypt(encryptedPrivateKey, password);
-    const privateKeyB64 = bytes.toString(CryptoJS.enc.Utf8);
-    return fromBase64(privateKeyB64);
+    const decryptedB64 = CryptoJS.AES.decrypt(encryptedPrivateKey, password).toString(CryptoJS.enc.Utf8);
+    return fromB64(decryptedB64);
   }
 
   // Create wallet from mnemonic
@@ -102,7 +101,7 @@ class WalletUtils {
     const keypair = this.createKeypairFromSeed(seed);
 
     const address = keypair.getPublicKey().toSuiAddress();
-    const publicKey = toBase64(keypair.getPublicKey().toSuiBytes());
+    const publicKey = toB64(keypair.getPublicKey().toSuiBytes());
     const privateKeyEncrypted = this.encryptPrivateKey(keypair.getSecretKey(), password);
 
     return {
@@ -253,6 +252,34 @@ export default function InternalWalletPage() {
 
     // Redirect to dashboard
     router.push('/dashboard');
+  };
+
+  const encryptPrivateKey = (privateKey: Uint8Array, password: string): string => {
+    const privateKeyB64 = toB64(privateKey);
+    return CryptoJS.AES.encrypt(privateKeyB64, password).toString();
+  };
+
+  const decryptPrivateKey = (encryptedKey: string, password: string): Uint8Array => {
+    const decryptedB64 = CryptoJS.AES.decrypt(encryptedKey, password).toString(CryptoJS.enc.Utf8);
+    return fromB64(decryptedB64);
+  };
+
+  const generateWallet = async (password: string) => {
+    try {
+      const keypair = new Ed25519Keypair();
+      const address = keypair.getPublicKey().toSuiAddress();
+      const publicKey = toB64(keypair.getPublicKey().toSuiBytes());
+      const privateKeyEncrypted = encryptPrivateKey(keypair.getSecretKey(), password);
+
+      return {
+        address,
+        publicKey,
+        privateKeyEncrypted
+      };
+    } catch (error) {
+      console.error('Error generating wallet:', error);
+      throw error;
+    }
   };
 
   return (

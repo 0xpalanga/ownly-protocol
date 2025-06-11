@@ -71,39 +71,6 @@ export default function DecryptPage() {
   const account = useCurrentAccount();
   const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
 
-  // Load decrypted token IDs from localStorage on mount
-  useEffect(() => {
-    if (account) {
-      const storedIds = localStorage.getItem(`decrypted_tokens_${account.address}`);
-      if (storedIds) {
-        setDecryptedTokenIds(new Set(JSON.parse(storedIds)));
-      }
-    }
-  }, [account]);
-
-  // Save decrypted token IDs to localStorage when they change
-  useEffect(() => {
-    if (account && decryptedTokenIds.size > 0) {
-      localStorage.setItem(
-        `decrypted_tokens_${account.address}`,
-        JSON.stringify(Array.from(decryptedTokenIds))
-      );
-    }
-  }, [decryptedTokenIds, account]);
-
-  const isTokenDecrypted = (tokenId: string): boolean => {
-    return decryptedTokenIds.has(tokenId);
-  };
-
-  useEffect(() => {
-    if (!account) {
-      router.push('/');
-      return;
-    }
-
-    fetchReceivedTokens();
-  }, [account]);
-
   const fetchReceivedTokens = async () => {
     if (!account) return;
     
@@ -140,8 +107,41 @@ export default function DecryptPage() {
     } catch (error) {
       console.error('Error fetching tokens:', error);
       setError('Failed to fetch tokens. Please try again.');
-    setIsLoading(false);
+      setIsLoading(false);
     }
+  };
+
+  // Load decrypted token IDs from localStorage on mount
+  useEffect(() => {
+    if (account) {
+      const storedIds = localStorage.getItem(`decrypted_tokens_${account.address}`);
+      if (storedIds) {
+        setDecryptedTokenIds(new Set(JSON.parse(storedIds)));
+      }
+    }
+  }, [account]);
+
+  // Save decrypted token IDs to localStorage when they change
+  useEffect(() => {
+    if (account && decryptedTokenIds.size > 0) {
+      localStorage.setItem(
+        `decrypted_tokens_${account.address}`,
+        JSON.stringify(Array.from(decryptedTokenIds))
+      );
+    }
+  }, [decryptedTokenIds, account]);
+
+  useEffect(() => {
+    if (!account) {
+      router.push('/');
+      return;
+    }
+
+    fetchReceivedTokens();
+  }, [account, router, fetchReceivedTokens]);
+
+  const isTokenDecrypted = (tokenId: string): boolean => {
+    return decryptedTokenIds.has(tokenId);
   };
 
   const handleDecrypt = async (token: EncryptedToken) => {

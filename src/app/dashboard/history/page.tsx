@@ -7,14 +7,17 @@ import { BackButton } from '@/components/BackButton';
 
 interface PlatformTransaction {
   id: string;
+  type: 'Encrypt' | 'Send' | 'Receive';
   txDigest: string;
-  token: string;
+  encryptedData: string;
+  encryptionKey: string;
   amount: string;
-  status: 'locked' | 'sent' | 'received';
+  token: string;
   timestamp: number;
-      sender: string;
+  sender: string;
   recipient?: string;
-  type?: 'Encrypt' | 'Send' | 'Receive';
+  status: 'locked' | 'sent' | 'received';
+  lockObjectId: string;
 }
 
 // Add formatBalance helper
@@ -54,45 +57,76 @@ export default function HistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const account = useCurrentAccount();
 
-  useEffect(() => {
-    const fetchHistory = async () => {
-      if (!account) return;
+  const fetchHistory = async () => {
+    if (!account) return;
+    
+    try {
+      setIsLoading(true);
+      setError(null);
       
-      try {
-        setError(null);
-        
-        // Fetch all types of encrypted token transactions
-        const [lockedTokens, sentTokens, receivedTokens] = await Promise.all([
-          getEncryptedTokensByStatus('locked', account.address),
-          getEncryptedTokensByStatus('sent', account.address),
-          getEncryptedTokensByStatus('received', account.address)
-        ]);
+      // Fetch all types of transactions
+      const [encrypted, sent, received] = await Promise.all([
+        getEncryptedTokensByStatus('locked', account.address),
+        getEncryptedTokensByStatus('sent', account.address),
+        getEncryptedTokensByStatus('received', account.address)
+      ]);
 
-        // Combine all transactions
-        const allTransactions = [
-          ...lockedTokens.map(token => ({
-            ...token,
-            type: 'Encrypt' as const
-          })),
-          ...sentTokens.map(token => ({
-            ...token,
-            type: 'Send' as const
-          })),
-          ...receivedTokens.map(token => ({
-            ...token,
-            type: 'Receive' as const
-          }))
-        ].sort((a, b) => b.timestamp - a.timestamp);
+      // Process and combine all transactions
+      const allTransactions: PlatformTransaction[] = [
+        ...encrypted.map(tx => ({
+          id: tx.id || tx.txDigest,
+          type: 'Encrypt' as const,
+          txDigest: tx.txDigest,
+          encryptedData: tx.encryptedData,
+          encryptionKey: tx.encryptionKey,
+          amount: tx.amount,
+          token: tx.token,
+          timestamp: tx.timestamp,
+          sender: tx.sender,
+          recipient: tx.recipient,
+          status: tx.status as 'locked' | 'sent' | 'received',
+          lockObjectId: tx.lockObjectId
+        })),
+        ...sent.map(tx => ({
+          id: tx.id || tx.txDigest,
+          type: 'Send' as const,
+          txDigest: tx.txDigest,
+          encryptedData: tx.encryptedData,
+          encryptionKey: tx.encryptionKey,
+          amount: tx.amount,
+          token: tx.token,
+          timestamp: tx.timestamp,
+          sender: tx.sender,
+          recipient: tx.recipient,
+          status: tx.status as 'locked' | 'sent' | 'received',
+          lockObjectId: tx.lockObjectId
+        })),
+        ...received.map(tx => ({
+          id: tx.id || tx.txDigest,
+          type: 'Receive' as const,
+          txDigest: tx.txDigest,
+          encryptedData: tx.encryptedData,
+          encryptionKey: tx.encryptionKey,
+          amount: tx.amount,
+          token: tx.token,
+          timestamp: tx.timestamp,
+          sender: tx.sender,
+          recipient: tx.recipient,
+          status: tx.status as 'locked' | 'sent' | 'received',
+          lockObjectId: tx.lockObjectId
+        }))
+      ].sort((a, b) => b.timestamp - a.timestamp);
 
-        setTransactions(allTransactions);
-      } catch (error) {
-        console.error('Error fetching history:', error);
-        setError('Failed to fetch transaction history. Please try again.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
+      setTransactions(allTransactions);
+    } catch (error) {
+      console.error('Error fetching history:', error);
+      setError('Failed to fetch transaction history. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
+  useEffect(() => {
     fetchHistory();
   }, [account]);
 
